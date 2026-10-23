@@ -125,6 +125,7 @@ Procedure CocoBoot()
   VideoBegin()
   Say("spi_hz=") : Num(SpiHz(0)) : Eol()
   Say("core1 launch=") : Num(CocoLaunchCore1()) : Eol()
+  CocoAudioBegin(#COCO_BTKEY_FLASH)
   MainT = Micros()
   Repeat
     CocoBoardService()

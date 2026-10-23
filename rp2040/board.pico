@@ -13,6 +13,8 @@
 #COCO_ROM_FLASH = $10000000 + #COCO_ROM_OFFSET
 ; The disk region: four .DSK slots of $29000 at $150000-$1F3FFF, below the Bluetooth key ($1FF000).
 #COCO_DISK_OFFSET = $150000
+; The speaker link key the NES firmware keeps ("BTK1"), read only.
+#COCO_BTKEY_FLASH = $101FF000
 
 Procedure VideoBegin()
   SpiPeriFromSys(200000)

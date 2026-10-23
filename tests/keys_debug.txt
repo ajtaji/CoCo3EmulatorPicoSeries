@@ -1,0 +1,14 @@
+expect 15 TEST program loaded
+cmd k
+expect 2 KEYS
+type aaaaaaaaaaaa
+wait 0.2
+cmd k
+wait 0.3
+cmd k
+wait 0.3
+cmd k
+wait 1
+cmd k
+cmd s
+expect 3 COCO frames

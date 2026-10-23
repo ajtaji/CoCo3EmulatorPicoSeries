@@ -19,6 +19,7 @@ XIncludeFile "../../src/video.pmi"
 XIncludeFile "../../src/keyboard.pmi"
 XIncludeFile "../../src/sound.pmi"
 XIncludeFile "../../src/disk.pmi"
+XIncludeFile "../../src/audio_none.pmi"
 XIncludeFile "../../src/coco3.pmi"
 XIncludeFile "../board.pico"
 

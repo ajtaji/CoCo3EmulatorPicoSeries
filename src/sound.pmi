@@ -12,8 +12,10 @@ Global Dim SoundRing.w(#SOUND_RING)
 Global SoundSamples.i                    ; samples ever written (the speaker's reader follows this)
 Global SoundNext.i, SoundFrac.i, SoundValue.i, SoundOn.i
 
+Declare.i CocoAudioOn()
+; Sampling runs only while something plays the ring.
 Procedure SoundStart()
-  SoundNext = CocoTime() : SoundFrac = 0 : SoundOn = 1
+  SoundNext = CocoTime() : SoundFrac = 0 : SoundOn = CocoAudioOn()
 EndProcedure
 
 Procedure SoundCatchUp(now.i)

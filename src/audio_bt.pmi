@@ -1,0 +1,64 @@
+; CoCo 3 sound to a Bluetooth speaker through PureMetal's Shared/Bluetooth/bt_audio.pmi (A2DP + SBC),
+; as the NES emulator does it: core 0 connects (CocoAudioBegin, before the machine starts), core 1
+; keeps the radio and the encoder going between the lines it draws (CocoAudioPoll), and the library
+; reads sound.pmi's 48 kHz ring directly (BtAudioSource), paced by its own clock.
+;
+; The speaker's address is never in this repository: a private wrapper (private/, ignored by git)
+; calls CocoAudioPeer(?Address) with its 6 bytes in HCI order (least significant first), the way the
+; NES's private wrapper keeps the same speaker. The link key is read, never written, from the NES's
+; record ("BTK1" in the last flash sector) when one is there, so the speaker does not pair again.
+
+Global Dim CocoBtPeer.a(6)
+Global CocoBtPeerSet.i, CocoAudioLive.i, CocoAudioRc.i, CocoAudioLast.i, CocoAudioGap.i = 700
+
+Procedure CocoAudioPeer(src.i)
+  Protected i.i
+  For i = 0 To 5 : CocoBtPeer(i) = PeekA(src + 5 - i) : Next
+  BtAudioStereo(1)
+  CocoBtPeerSet = 1
+EndProcedure
+
+Procedure CocoAudioBegin(keyRecord.i)
+  CocoAudioLive = 0
+  If CocoBtPeerSet = 0
+    Say("Sound: no speaker set (the public firmware is silent; a private wrapper names the speaker)") : Eol()
+    ProcedureReturn
+  EndIf
+  If keyRecord
+    If PeekA(keyRecord) = 66 And PeekA(keyRecord + 1) = 84 And PeekA(keyRecord + 2) = 75 And PeekA(keyRecord + 3) = 49
+      BtAudioSetKey(keyRecord + 4)
+    EndIf
+  EndIf
+  Say("Sound: connecting to the Bluetooth speaker") : Eol()
+  CocoAudioRc = BtAudioBegin(@CocoBtPeer(0))
+  If CocoAudioRc <> 0
+    Say("Sound: Bluetooth error ") : Num(CocoAudioRc) : Say(" (HCI status ") : Num(BtAudioStatus())
+    Say("): the speaker is off, out of range or paired elsewhere; the CoCo runs without sound") : Eol()
+    ProcedureReturn
+  EndIf
+  BtAudioSource(@SoundRing(0), #SOUND_RING, @SoundSamples)
+  BtAudioLead(25000)                     ; 25 ms behind the machine, inside the 43 ms ring
+  BtAudioPumps(0)                        ; from here core 1 drives the radio
+  CocoAudioLive = 1
+  Say("Sound: playing") : Eol()
+EndProcedure
+
+; From core 1, often: every 0.15 ms while a frame is part-way encoded, else every 0.7 ms is plenty.
+Procedure CocoAudioPoll()
+  Protected now.i
+  If CocoAudioLive = 0 : ProcedureReturn : EndIf
+  now = Micros()
+  If now - CocoAudioLast < CocoAudioGap : ProcedureReturn : EndIf
+  CocoAudioLast = now
+  BtAudioPoll()
+  If BtAudioBusy() : CocoAudioGap = 150 : Else : CocoAudioGap = 700 : EndIf
+EndProcedure
+
+Procedure CocoAudioReport()
+  Say(" bt_live=") : Num(BtAudioLive()) : Say(" bt_packets=") : Num(BtAudioPackets())
+  Say(" bt_underruns=") : Num(BtAudioUnderruns())
+EndProcedure
+
+Procedure.i CocoAudioOn()
+  ProcedureReturn CocoAudioLive
+EndProcedure

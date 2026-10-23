@@ -10,7 +10,7 @@
 
 #ROM_REGION_BYTES = $10000
 
-Global CocoFullSpeed.i, CocoReport.i = 1, CocoMonitor.i
+Global CocoFullSpeed.i, CocoReport.i = 1, CocoMonitor.i, CocoMonI.i
 Global CocoRunUs.i, CocoWaitUs.i, CocoLate.i, CocoRomError.i
 Global CocoStatFrames.i, CocoStatCycles.i, CocoStatAt.i, CocoStatRun.i, CocoStatVideo.i
 
@@ -18,6 +18,7 @@ Declare CocoBoardService()
 Declare CocoParkVideo(on.i)
 Declare CocoBoardSetup()                ; the wrapper's: after every reset (a diagnostic sets up a screen here)
 Declare CocoFrameHook()                 ; the wrapper's: once a frame
+Declare CocoAudioReport()
 
 ; ---------------------------------------------------------------- the ROMs
 
@@ -150,7 +151,7 @@ Procedure CocoStatus(now.i)
   Say(" video_fps_x10=") : Num(((VideoFrames - CocoStatVideo) * 10000) / (dt / 1000))
   Say(" rows_sent=") : Num(VideoRowsSent)
   Say(" keys=") : Num(KeyTyped) : Say(" queued=") : Num(KeyPending())
-  Say(" sound_samples=") : Num(SoundSamples)
+  Say(" sound_samples=") : Num(SoundSamples) : CocoAudioReport()
   Say(" late=") : Num(CocoLate)
   Eol()
   CocoStatAt = now : CocoStatFrames = CocoFrames : CocoStatCycles = CpuCycles
@@ -174,6 +175,12 @@ Procedure CocoMonitorCommand(c.i)
       CocoCapture()
     Case 112                             ; p
       CocoCpuReport()
+    Case 107                             ; k
+      Say("KEYS typed=") : Num(KeyTyped) : Say(" head=") : Num(KeyHead) : Say(" tail=") : Num(KeyTail)
+      Say(" state=") : Num(KeyState) : Say(" dropped=") : Num(KeyDropped) : Say(" matrix=")
+      For CocoMonI = 0 To 7 : Num(CocoKeys(CocoMonI)) : Say(",") : Next
+      Say(" pia0_ddrb=") : Num(PiaDdrB(0)) : Say(" pia0_outb=") : Num(PiaOutB(0)) : Say(" pia0_cra=") : Num(PiaCrA(0))
+      Say(" rows=") : Num(Pia0InputA()) : Eol()
     Case 114                             ; r
       CocoReset() : CocoCpuReset() : CocoBoardSetup()
       Say("COCO reset") : Eol()

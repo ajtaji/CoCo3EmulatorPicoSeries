@@ -4,25 +4,8 @@
 #CPU_TIMING = 1
 #CPU_ASM_TAIL = 1
 #VIDEO_RGB = 0
-EnableExplicit
-XIncludeFile "RP2040/Lib/clocks.pico"
-XIncludeFile "RP2040/Lib/timer.pico"
-XIncludeFile "RP2040/Lib/uart.pico"
-XIncludeFile "RP2040/Lib/usb_serial.pico"
-XIncludeFile "RP2040/Lib/safety.pico"
-XIncludeFile "RP2040/Lib/flashid.pico"
-XIncludeFile "RP2040/Lib/flash.pico"
-XIncludeFile "RP2040/Lib/spi.pico"
-XIncludeFile "RP2040/Lib/st7796.pico"
-XIncludeFile "../../6809EmulatorPicoSeries/src/cpu6809.pico"
-XIncludeFile "../src/cpu6809_glue.pmi"
-XIncludeFile "../src/machine.pmi"
-XIncludeFile "../src/video.pmi"
-XIncludeFile "../src/keyboard.pmi"
-XIncludeFile "../src/sound.pmi"
-XIncludeFile "../src/disk.pmi"
-XIncludeFile "../src/coco3.pmi"
-XIncludeFile "board.pico"
+#COCO_AUDIO = 0                          ; the public firmware names no speaker: no sound
+XIncludeFile "coco3_body.pico"
 
 Procedure CocoBoardSetup()
 EndProcedure

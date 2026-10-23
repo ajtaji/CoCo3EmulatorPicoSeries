@@ -34,6 +34,7 @@ Global VideoFontLoaded.i
 Global VideoForce.i, VideoFrames.i, VideoRowsSent.i, VideoLastPal.i = -1
 
 Declare VideoSendRow(y.i, pixels.i)
+Declare CocoAudioPoll()                 ; core 1 keeps the speaker going between lines
 
 Procedure VideoInit()
   Protected i.i, c.i, r.i, g.i, b.i, t.i
@@ -313,6 +314,7 @@ Procedure VideoFrame()
         VideoRowsSent = VideoRowsSent + 1
       Next
     EndIf
+    CocoAudioPoll()
   Next
   VideoFrames = VideoFrames + 1
 EndProcedure

@@ -14,6 +14,8 @@
 ; The disk region: four .DSK slots of $29000 at $300000-$3A3FFF (inside the space a PDP-11 pack from
 ; $240000 would use: a board that keeps one there cannot keep CoCo disks too).
 #COCO_DISK_OFFSET = $300000
+; The speaker link key the NES firmware keeps ("BTK1"), read only.
+#COCO_BTKEY_FLASH = $103FF000
 
 Procedure VideoBegin()
   SpiPeriFromSys(ClockSysConfigKhz())

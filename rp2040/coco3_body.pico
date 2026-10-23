@@ -1,0 +1,37 @@
+; Everything a CoCo 3 build for this board includes. The wrapper sets #CPU_TIMING = 1, #CPU_ASM_TAIL,
+; #VIDEO_RGB and #COCO_AUDIO (1: the Bluetooth speaker libraries; a private wrapper then names the
+; speaker), defines CocoBoardSetup() and CocoFrameHook(), and calls Main().
+EnableExplicit
+XIncludeFile "RP2040/Lib/clocks.pico"
+XIncludeFile "RP2040/Lib/timer.pico"
+XIncludeFile "RP2040/Lib/uart.pico"
+XIncludeFile "RP2040/Lib/usb_serial.pico"
+XIncludeFile "RP2040/Lib/safety.pico"
+XIncludeFile "RP2040/Lib/flashid.pico"
+XIncludeFile "RP2040/Lib/flash.pico"
+XIncludeFile "RP2040/Lib/spi.pico"
+XIncludeFile "RP2040/Lib/st7796.pico"
+XIncludeFile "../../6809EmulatorPicoSeries/src/cpu6809.pico"
+XIncludeFile "../src/cpu6809_glue.pmi"
+XIncludeFile "../src/machine.pmi"
+XIncludeFile "../src/video.pmi"
+XIncludeFile "../src/keyboard.pmi"
+XIncludeFile "../src/sound.pmi"
+XIncludeFile "../src/disk.pmi"
+CompilerIf #COCO_AUDIO = 1
+  XIncludeFile "RP2040/Lib/bits.pico"
+  XIncludeFile "RP2040/Lib/wiring.pico"
+  XIncludeFile "RP2040/Lib/string_out.pico"
+  XIncludeFile "RP2040/Lib/cyw43_nvram.pico"
+  XIncludeFile "RP2040/Lib/cyw43.pico"
+  XIncludeFile "RP2040/Lib/cyw43_btfw.pico"
+  XIncludeFile "RP2040/Lib/bluetooth.pico"
+  XIncludeFile "Shared/Bluetooth/sbc.pmi"
+  XIncludeFile "Shared/Bluetooth/bt_audio.pmi"
+  XIncludeFile "../src/audio_bt.pmi"
+CompilerElse
+  XIncludeFile "../src/audio_none.pmi"
+CompilerEndIf
+XIncludeFile "../src/coco3.pmi"
+XIncludeFile "board.pico"
+

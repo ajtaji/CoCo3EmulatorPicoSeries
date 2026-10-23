@@ -1,0 +1,20 @@
+; No sound output (the public firmware, and builds without the Bluetooth libraries). The DAC is still
+; sampled into sound.pmi's ring, so a capture of it is possible; nothing reads it.
+
+Global CocoAudioLive.i
+
+Procedure CocoAudioPeer(src.i)
+EndProcedure
+
+Procedure CocoAudioBegin(keyRecord.i)
+EndProcedure
+
+Procedure CocoAudioPoll()
+EndProcedure
+
+Procedure CocoAudioReport()
+EndProcedure
+
+Procedure.i CocoAudioOn()
+  ProcedureReturn CocoAudioLive
+EndProcedure

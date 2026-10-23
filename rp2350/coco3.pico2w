@@ -4,26 +4,8 @@
 #CPU_TIMING = 1
 #CPU_ASM_TAIL = 1
 #VIDEO_RGB = 0
-EnableExplicit
-XIncludeFile "RP2350/Lib/multicore_smp.pico2"
-XIncludeFile "RP2350/Lib/clocks.pico2"
-XIncludeFile "RP2350/Lib/timer.pico2"
-XIncludeFile "RP2350/Lib/uart.pico2"
-XIncludeFile "RP2350/Lib/usb_serial.pico2"
-XIncludeFile "RP2350/Lib/safety.pico2"
-XIncludeFile "RP2350/Lib/flashid.pico2"
-XIncludeFile "RP2350/Lib/flash.pico2"
-XIncludeFile "RP2350/Lib/spi.pico2"
-XIncludeFile "RP2350/Lib/st7796.pico2"
-XIncludeFile "../../6809EmulatorPicoSeries/src/cpu6809.pico2"
-XIncludeFile "../src/cpu6809_glue.pmi"
-XIncludeFile "../src/machine.pmi"
-XIncludeFile "../src/video.pmi"
-XIncludeFile "../src/keyboard.pmi"
-XIncludeFile "../src/sound.pmi"
-XIncludeFile "../src/disk.pmi"
-XIncludeFile "../src/coco3.pmi"
-XIncludeFile "board.pico2"
+#COCO_AUDIO = 0                          ; the public firmware names no speaker: no sound
+XIncludeFile "coco3_body.pico2"
 
 Procedure CocoBoardSetup()
 EndProcedure
