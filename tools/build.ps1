@@ -75,5 +75,10 @@ try {
     & py -3 @args2
     if ($LASTEXITCODE -ne 0) { throw "board.py exit $LASTEXITCODE" }
 } finally {
-    Remove-Item -LiteralPath $leaseFile -ErrorAction SilentlyContinue
+    # another session may have the file open to read who holds it: retry until it is really gone
+    for ($i = 0; $i -lt 50 -and (Test-Path -LiteralPath $leaseFile); $i++) {
+        Remove-Item -LiteralPath $leaseFile -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $leaseFile) { Start-Sleep -Milliseconds 200 }
+    }
+    if (Test-Path -LiteralPath $leaseFile) { Write-Warning "COULD NOT REMOVE $leaseFile - delete it by hand; it blocks the board" }
 }

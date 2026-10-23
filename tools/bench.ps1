@@ -54,7 +54,12 @@ try {
         if ($LASTEXITCODE -ne 0) { "BOARD RUN FAILED (exit $LASTEXITCODE)"; $failed++ }
     }
 } finally {
-    Remove-Item -LiteralPath $leaseFile -ErrorAction SilentlyContinue
+    # another session may have the file open to read who holds it: retry until it is really gone
+    for ($i = 0; $i -lt 50 -and (Test-Path -LiteralPath $leaseFile); $i++) {
+        Remove-Item -LiteralPath $leaseFile -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $leaseFile) { Start-Sleep -Milliseconds 200 }
+    }
+    if (Test-Path -LiteralPath $leaseFile) { Write-Warning "COULD NOT REMOVE $leaseFile - delete it by hand; it blocks the board" }
     "Lease released"
 }
 if ($failed) { exit 1 }
