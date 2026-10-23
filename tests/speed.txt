@@ -1,0 +1,31 @@
+# Speed against a real CoCo 3: paced (the real machine's rate), then unthrottled (monitor f), at 0.89 MHz
+# and at 1.79 MHz (POKE 65497,0). BASIC runs a busy loop so the CPU is never idle in SYNC/CWAI.
+expect 15 CoCo 3 ROM loaded
+screen 20 \r\nOK +\r\n
+line 10 A=A+1:GOTO 10
+line RUN
+wait 2
+cmd s
+wait 5
+cmd s
+cmd f
+wait 5
+cmd s
+wait 5
+cmd s
+cmd f
+key 1b
+wait 1
+line POKE 65497,0:RUN
+wait 2
+cmd s
+wait 5
+cmd s
+cmd f
+wait 5
+cmd s
+wait 5
+cmd s
+cmd f
+cmd s
+expect 3 COCO frames

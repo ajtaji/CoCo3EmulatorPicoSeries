@@ -1,0 +1,15 @@
+# rp2040/coco3.picow with the ROM region loaded: boot to BASIC, type and run a program.
+# (Screen lines come back padded with spaces to the width of the screen.)
+expect 15 CoCo 3 ROM loaded
+screen 20 DISK EXTENDED COLOR BASIC 2\.1
+screen 5 \r\nOK +\r\n
+line PRINT 2+3
+screen 8 \r\n 5 +\r\n
+line 10 FOR I=1 TO 5
+line 20 PRINT I*I
+line 30 NEXT I
+line RUN
+screen 20 \r\n 25 +\r\n
+capture build/basic.png
+cmd s
+expect 3 COCO frames
