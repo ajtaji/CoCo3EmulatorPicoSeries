@@ -50,3 +50,7 @@ Procedure CocoCpuReport()
   Say(" wait=") : Num(CpuWaiting) : Say(" sync=") : Num(CpuSyncing) : Say(" stopped=") : Num(CpuStopped)
   Eol()
 EndProcedure
+
+Procedure CocoNmi()
+  CpuNmi()
+EndProcedure

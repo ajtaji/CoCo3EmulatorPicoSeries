@@ -71,16 +71,36 @@ Procedure CocoParkVideo(on.i)
   EndIf
 EndProcedure
 
+; Core 1 waits here, in SRAM, while core 0 has the flash down (a disk write) or the picture (a capture).
+ProcedureRAM Core1Park()
+  Core1Parked = 1
+  While PeekL(@Core1ParkRequest) : Wend
+  Core1Parked = 0
+EndProcedure
+
 Procedure Core1Main()
   WorkerReady = 1
   Repeat
-    If PeekL(@Core1ParkRequest)
-      Core1Parked = 1
-      While PeekL(@Core1ParkRequest) : Wend
-      Core1Parked = 0
-    EndIf
+    If PeekL(@Core1ParkRequest) : Core1Park() : EndIf
     VideoFrame()
   ForEver
+EndProcedure
+
+; Erase one 4 KB flash sector and program it from SRAM, with core 1 parked off the flash. Only the disk
+; region may be written: anything else is refused (a wrong sector number must never erase the program).
+Global CocoFlashRefused.i
+Procedure.i CocoFlashSector(offset.i, src.i)
+  Protected ok.i
+  If offset < #COCO_DISK_OFFSET Or offset + 4096 > #COCO_DISK_OFFSET + #DISK_SLOTS * #DISK_SLOT_BYTES Or (offset & $FFF)
+    CocoFlashRefused = CocoFlashRefused + 1
+    ProcedureReturn 0
+  EndIf
+  CocoParkVideo(1)
+  If PeekL(@Core1Parked) = 0 : CocoParkVideo(0) : ProcedureReturn 0 : EndIf
+  ok = FlashRangeErase(offset, 4096)
+  If ok : ok = FlashRangeProgram(offset, src, 4096) : EndIf
+  CocoParkVideo(0)
+  ProcedureReturn ok
 EndProcedure
 
 Global MainT.i, MainE.i
@@ -100,6 +120,8 @@ Procedure CocoBoot()
   MainE = CocoLoadRoms(#COCO_ROM_FLASH)
   CocoRomError = MainE
   CocoRomMessage(MainE)
+  DiskInit($10000000 + #COCO_DISK_OFFSET, #COCO_DISK_OFFSET)
+  Say("disks:") : For MainT = 0 To #DISK_SLOTS - 1 : Say(" ") : Num(Bool(DiskBase(MainT) <> 0)) : Next : Eol()
   VideoBegin()
   Say("spi_hz=") : Num(SpiHz(0)) : Eol()
   Say("core1 launch=") : Num(CocoLaunchCore1()) : Eol()

@@ -40,3 +40,6 @@ EndProcedure
 
 Procedure CocoCpuReport()
 EndProcedure
+
+Procedure CocoNmi()
+EndProcedure

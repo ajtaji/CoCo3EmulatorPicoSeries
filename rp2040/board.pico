@@ -11,6 +11,8 @@
 ; FlashRegion - the exe of 2026-10-22 18:43 predates it.)
 #COCO_ROM_OFFSET = $140000
 #COCO_ROM_FLASH = $10000000 + #COCO_ROM_OFFSET
+; The disk region: four .DSK slots of $29000 at $150000-$1F3FFF, below the Bluetooth key ($1FF000).
+#COCO_DISK_OFFSET = $150000
 
 Procedure VideoBegin()
   SpiPeriFromSys(200000)

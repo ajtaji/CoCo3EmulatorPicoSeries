@@ -11,6 +11,9 @@
 ; make_rom_region.py --target rp2350 --offset 0x3E0000.
 #COCO_ROM_OFFSET = $3E0000
 #COCO_ROM_FLASH = $10000000 + #COCO_ROM_OFFSET
+; The disk region: four .DSK slots of $29000 at $300000-$3A3FFF (inside the space a PDP-11 pack from
+; $240000 would use: a board that keeps one there cannot keep CoCo disks too).
+#COCO_DISK_OFFSET = $300000
 
 Procedure VideoBegin()
   SpiPeriFromSys(ClockSysConfigKhz())

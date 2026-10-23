@@ -1,9 +1,267 @@
-; $FF40-$FF5F: the cartridge's I/O. The FD-502 floppy controller (WD1793) goes here next; until then
-; the slot reads as an empty bus and writes go nowhere.
+; The FD-502 floppy controller: its control latch DSKREG ($FF40) and a WD1793 ($FF48-$FF4B), with up
+; to four drives whose .DSK (JVC) images live in the board's flash. Chip-independent; the board file
+; supplies CocoFlashSector(offset, src): erase one 4 KB flash sector and program it from SRAM.
+;
+; How Disk BASIC moves a sector, and why the interrupt comes when it does: it starts a read or write,
+; sets DSKREG's HALT enable, and loops LDA/STA on the data register with no test at all. The real
+; controller HALTs the CPU until each byte is ready; after the 256th byte the next access finds no
+; DRQ, the CPU halts, the WD1793 finishes and raises INTRQ, which (with DSKREG bit 5) is the NMI that
+; ends the loop. So here every byte is ready at once, and INTRQ is raised on the access AFTER the
+; last byte - raising it on the last byte would let the NMI cut the loop before that byte is stored.
+; (MAME coco_fdc.cpp update_lines: NMI = INTRQ and DSKREG bit 5; INTRQ clears HALT enable.)
+;
+; THE DISK REGION: four slots of $29000 bytes from #COCO_DISK_OFFSET. A slot starts with a 4 KB header
+; (tools/make_disk_region.py): "CDSK", version 1, image bytes, tracks, sides, sectors per track, the
+; JVC header length, then the image at +$1000 (sector 1 of track 0 side 0 first, 256 bytes a sector).
+
+#DISK_SLOTS = 4
+#DISK_SLOT_BYTES = $29000
+#DISK_SECTOR = 256
+
+Declare.i CocoFlashSector(offset.i, src.i)
+Declare CocoNmi()
+
+Global DiskReg.i
+Global WdStatus.i, WdTrack.i, WdSector.i, WdData.i, WdCmd.i, WdDir.i = 1
+Global WdMode.i                          ; 0 idle, 1 read, 2 write, 3 read address, 4 write track
+Global WdCount.i, WdPtr.i, WdIntrq.i, WdIntrqDue.i, WdType1.i
+Global Dim DiskBase.i(#DISK_SLOTS)       ; flash address of each drive's image, 0 = no disk
+Global Dim DiskFlash.i(#DISK_SLOTS)      ; flash OFFSET of each drive's image
+Global Dim DiskTracks.i(#DISK_SLOTS)
+Global Dim DiskSides.i(#DISK_SLOTS)
+Global Dim DiskSpt.i(#DISK_SLOTS)
+Global Dim DiskHead.i(#DISK_SLOTS)       ; where each drive's head is (physical track)
+Global Dim WdAddr.a(6)
+Global Dim WdBuf.a(256)                  ; the sector being written
+Global Dim DiskSectorBuf.a(4096)         ; one flash sector, for read-modify-write
+Global DiskWriteErrors.i, DiskReads.i, DiskWrites.i, DiskRegionBase.i, DiskRegionFlash.i
+
+; Find the images in the disk region (base = its flash address, flash = its offset).
+Procedure DiskInit(base.i, flash.i)
+  Protected i.i, slot.i
+  DiskRegionBase = base : DiskRegionFlash = flash
+  For i = 0 To #DISK_SLOTS - 1
+    slot = base + i * #DISK_SLOT_BYTES
+    DiskBase(i) = 0 : DiskHead(i) = 0
+    If PeekL(slot) = $4B534443 And PeekL(slot + 4) = 1   ; "CDSK"
+      DiskTracks(i) = PeekL(slot + 12) : DiskSides(i) = PeekL(slot + 16) : DiskSpt(i) = PeekL(slot + 20)
+      If DiskTracks(i) > 0 And DiskTracks(i) <= 80 And DiskSides(i) >= 1 And DiskSides(i) <= 2 And DiskSpt(i) = 18
+        DiskBase(i) = slot + $1000 + PeekL(slot + 24)
+        DiskFlash(i) = flash + i * #DISK_SLOT_BYTES + $1000 + PeekL(slot + 24)
+      EndIf
+    EndIf
+  Next
+  DiskReg = 0 : WdStatus = 0 : WdMode = 0 : WdIntrq = 0 : WdIntrqDue = 0 : WdTrack = 0 : WdSector = 1
+EndProcedure
+
+Procedure.i DiskDrive()
+  If DiskReg & 4 : ProcedureReturn 2 : EndIf
+  If DiskReg & 2 : ProcedureReturn 1 : EndIf
+  If DiskReg & 1 : ProcedureReturn 0 : EndIf
+  If DiskReg & $40 : ProcedureReturn 3 : EndIf
+  ProcedureReturn -1
+EndProcedure
+
+Procedure.i DiskSide()
+  Protected d.i
+  d = DiskDrive()
+  If (DiskReg & $40) And d <> 3 : ProcedureReturn 1 : EndIf
+  ProcedureReturn 0
+EndProcedure
+
+; INTRQ: NMI when DSKREG bit 5 allows it; it also clears HALT enable.
+Procedure WdRaise()
+  WdIntrq = 1 : WdIntrqDue = 0
+  DiskReg = DiskReg & $7F
+  If DiskReg & $20 : CocoNmi() : EndIf
+EndProcedure
+
+; The image byte offset of (head track, side, sector) on drive d, or -1.
+Procedure.i DiskOffset(d.i, sector.i)
+  Protected t.i, side.i
+  If d < 0 Or d >= #DISK_SLOTS : ProcedureReturn -1 : EndIf
+  If DiskBase(d) = 0 : ProcedureReturn -1 : EndIf
+  t = DiskHead(d) : side = DiskSide()
+  If t <> WdTrack Or t >= DiskTracks(d) Or side >= DiskSides(d) : ProcedureReturn -1 : EndIf
+  If sector < 1 Or sector > DiskSpt(d) : ProcedureReturn -1 : EndIf
+  ProcedureReturn ((t * DiskSides(d) + side) * DiskSpt(d) + sector - 1) * #DISK_SECTOR
+EndProcedure
+
+Procedure.i DiskReady()
+  Protected d.i
+  d = DiskDrive()
+  If d < 0 : ProcedureReturn 0 : EndIf
+  ProcedureReturn Bool(DiskBase(d) <> 0)
+EndProcedure
+
+; Write the 256 bytes in WdBuf at image offset `off` of drive d: read the flash sector around it,
+; patch, erase, program. Returns 1, or 0 with the write counted as an error.
+Procedure.i DiskCommit(d.i, off.i, src.i)
+  Protected flashOff.i, sect.i, i.i
+  flashOff = DiskFlash(d) + off
+  sect = flashOff & ~$FFF
+  For i = 0 To 4095 : DiskSectorBuf(i) = PeekA($10000000 + sect + i) : Next
+  For i = 0 To 255 : DiskSectorBuf((flashOff & $FFF) + i) = PeekA(src + i) : Next
+  If CocoFlashSector(sect, @DiskSectorBuf(0)) = 0
+    DiskWriteErrors = DiskWriteErrors + 1
+    ProcedureReturn 0
+  EndIf
+  DiskWrites = DiskWrites + 1
+  ProcedureReturn 1
+EndProcedure
+
+Procedure WdCommand(v.i)
+  Protected d.i, off.i
+  WdCmd = v : WdIntrq = 0 : WdIntrqDue = 0
+  d = DiskDrive()
+  If (v & $F0) = $D0
+    ; Force Interrupt: stop; I3 ($08) interrupts at once
+    WdMode = 0 : WdStatus = WdStatus & $FC
+    If v & $08 : WdRaise() : EndIf
+    ProcedureReturn
+  EndIf
+  If (v & $80) = 0
+    ; Type I: restore, seek, step, step in, step out
+    WdType1 = 1 : WdMode = 0
+    If d >= 0
+      Select v & $F0
+        Case $00 : DiskHead(d) = 0 : WdTrack = 0
+        Case $10 : DiskHead(d) = WdData : WdTrack = WdData
+        Default
+          If (v & $60) = $40 : WdDir = 1 : ElseIf (v & $60) = $60 : WdDir = -1 : EndIf
+          DiskHead(d) = DiskHead(d) + WdDir
+          If DiskHead(d) < 0 : DiskHead(d) = 0 : EndIf
+          If DiskHead(d) > 83 : DiskHead(d) = 83 : EndIf
+          If v & $10 : WdTrack = (WdTrack + WdDir) & 255 : EndIf
+      EndSelect
+    EndIf
+    WdStatus = 0
+    If DiskReady() = 0 : WdStatus = WdStatus | $80 : EndIf
+    If v & $08 : WdStatus = WdStatus | $20 : EndIf
+    If d >= 0
+      If DiskHead(d) = 0 : WdStatus = WdStatus | $04 : EndIf
+      If (v & $04) And (DiskHead(d) <> WdTrack Or DiskBase(d) = 0 Or DiskHead(d) >= DiskTracks(d))
+        WdStatus = WdStatus | $10
+      EndIf
+    EndIf
+    WdRaise()
+    ProcedureReturn
+  EndIf
+  WdType1 = 0
+  If DiskReady() = 0
+    WdStatus = $80 : WdMode = 0 : WdRaise() : ProcedureReturn
+  EndIf
+  Select v & $E0
+    Case $80                             ; Read Sector ($8x, $9x)
+      off = DiskOffset(d, WdSector)
+      If off < 0 : WdStatus = $10 : WdMode = 0 : WdRaise() : ProcedureReturn : EndIf
+      WdPtr = DiskBase(d) + off : WdCount = #DISK_SECTOR : WdMode = 1 : WdStatus = $03
+      DiskReads = DiskReads + 1
+    Case $A0                             ; Write Sector ($Ax, $Bx)
+      off = DiskOffset(d, WdSector)
+      If off < 0 : WdStatus = $10 : WdMode = 0 : WdRaise() : ProcedureReturn : EndIf
+      WdPtr = off : WdCount = 0 : WdMode = 2 : WdStatus = $03
+    Case $C0                             ; Read Address
+      WdAddr(0) = DiskHead(d) : WdAddr(1) = DiskSide() : WdAddr(2) = 1 : WdAddr(3) = 1
+      WdAddr(4) = 0 : WdAddr(5) = 0
+      WdCount = 0 : WdMode = 3 : WdStatus = $03
+    Default
+      If v & $10
+        ; Write Track (DSKINI): the bytes are taken and the track's sectors become $FF
+        WdCount = 0 : WdMode = 4 : WdStatus = $03
+      Else
+        ; Read Track is not supported: record not found
+        WdStatus = $10 : WdMode = 0 : WdRaise()
+      EndIf
+  EndSelect
+EndProcedure
+
+; A data access with no byte ready: the end of a transfer.
+Procedure WdFinish()
+  WdMode = 0 : WdStatus = WdStatus & $FC
+  WdRaise()
+EndProcedure
+
+Procedure.i WdReadData()
+  If WdMode = 1
+    If WdCount > 0
+      WdData = PeekA(WdPtr) : WdPtr = WdPtr + 1 : WdCount = WdCount - 1
+      If WdCount = 0 : WdStatus = WdStatus & $FD : WdIntrqDue = 1 : EndIf
+      ProcedureReturn WdData
+    EndIf
+  ElseIf WdMode = 3
+    If WdCount < 6
+      WdData = WdAddr(WdCount) : WdCount = WdCount + 1
+      If WdCount = 6 : WdStatus = WdStatus & $FD : WdIntrqDue = 1 : EndIf
+      ProcedureReturn WdData
+    EndIf
+  EndIf
+  If WdIntrqDue : WdFinish() : EndIf
+  ProcedureReturn WdData
+EndProcedure
+
+Procedure WdWriteData(v.i)
+  Protected d.i, i.i, t.i, side.i, off.i
+  WdData = v
+  If WdMode = 2
+    If WdCount < 256
+      WdBuf(WdCount) = v : WdCount = WdCount + 1
+      If WdCount = 256
+        WdStatus = WdStatus & $FD
+        If DiskCommit(DiskDrive(), WdPtr, @WdBuf(0)) = 0 : WdStatus = WdStatus | $20 : EndIf
+        WdIntrqDue = 1
+      EndIf
+      ProcedureReturn
+    EndIf
+  ElseIf WdMode = 4
+    WdCount = WdCount + 1
+    If WdCount = 6250
+      ; one revolution taken: blank this track's sectors
+      d = DiskDrive()
+      For i = 0 To 255 : WdBuf(i) = $FF : Next
+      For i = 1 To DiskSpt(d)
+        off = DiskOffset(d, i)
+        If off >= 0 : DiskCommit(d, off, @WdBuf(0)) : EndIf
+      Next
+      WdStatus = WdStatus & $FD : WdIntrqDue = 1
+    EndIf
+    If WdCount <= 6250 : ProcedureReturn : EndIf
+  EndIf
+  If WdIntrqDue : WdFinish() : EndIf
+EndProcedure
+
+Procedure.i WdReadStatus()
+  Protected s.i
+  If WdIntrqDue : WdMode = 0 : WdStatus = WdStatus & $FC : WdIntrqDue = 0 : EndIf
+  WdIntrq = 0
+  s = WdStatus
+  If WdType1
+    s = s & ~$80
+    If DiskReady() = 0 : s = s | $80 : EndIf
+  EndIf
+  ProcedureReturn s
+EndProcedure
 
 Procedure.i CocoDiskRead(reg.i)
-  ProcedureReturn $FF
+  If reg < 8 : ProcedureReturn $FF : EndIf
+  Select reg & 3
+    Case 0 : ProcedureReturn WdReadStatus()
+    Case 1 : ProcedureReturn WdTrack
+    Case 2 : ProcedureReturn WdSector
+  EndSelect
+  ProcedureReturn WdReadData()
 EndProcedure
 
 Procedure CocoDiskWrite(reg.i, v.i)
+  If reg < 8
+    DiskReg = v
+    If WdIntrq And (DiskReg & $20) : DiskReg = DiskReg & $7F : EndIf
+    ProcedureReturn
+  EndIf
+  Select reg & 3
+    Case 0 : WdCommand(v)
+    Case 1 : WdTrack = v
+    Case 2 : WdSector = v
+    Case 3 : WdWriteData(v)
+  EndSelect
 EndProcedure
