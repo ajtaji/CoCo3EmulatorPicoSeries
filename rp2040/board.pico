@@ -1,6 +1,8 @@
-; Pico W (RP2040) board file: the LAFVIN ST7796 kit as the NES emulator uses it (SPI0 GP2/GP3 at
-; 100 MHz, CS GP5, DC GP6, RST GP7, landscape 480 x 320), USB serial for the keyboard and the monitor,
-; core 1 for the picture. Included by the wrapper after the shared machine files.
+; Pico W (RP2040): the LAFVIN ST7796 kit as the NES emulator uses it (SPI0 GP2/GP3 at 100 MHz, CS GP5,
+; DC GP6, RST GP7), landscape 480 x 320; 200 MHz. The rest is src/board_common.pmi.
+
+#COCO_CLOCK_KHZ = 200000
+#COCO_BOARD_NAME$ = "Pico W"
 
 ; The ROM region: flash $140000-$14FFFF, above the radio firmware ($100000-$13FFFF) and clear of the
 ; NES ROM store ($50000-$FEFFF) other programs on a shared board keep. tools/make_rom_region.py builds
@@ -10,118 +12,14 @@
 #COCO_ROM_OFFSET = $140000
 #COCO_ROM_FLASH = $10000000 + #COCO_ROM_OFFSET
 
-Global Core1ParkRequest.i, Core1Parked.i, WorkerReady.i
-
-Procedure Say(*text.i)
-  Protected p.i, c.i
-  p = *text
-  c = PeekA(p) & 255
-  While c
-    UsbSerialWrite(c)
-    p = p + 1
-    c = PeekA(p) & 255
-  Wend
-EndProcedure
-
-Procedure Num(v.i)
-  Protected d.i
-  If v < 0
-    UsbSerialWrite(45)
-    v = 0 - v
-  EndIf
-  d = 1
-  While v / d >= 10
-    d = d * 10
-  Wend
-  While d > 0
-    UsbSerialWrite(48 + (v / d) % 10)
-    d = d / 10
-  Wend
-EndProcedure
-
-Procedure Eol()
-  UsbSerialWrite(13) : UsbSerialWrite(10)
-  UsbSerialFlush() : UsbSerialTask()
-EndProcedure
-
-Procedure CocoBoardService()
-  UsbSerialTask() : SafetyPet()
-EndProcedure
-
-Procedure WaitUs(us.i)
-  Protected t.i
-  t = Micros()
-  While Micros() - t < us
-    CocoBoardService()
-  Wend
-EndProcedure
-
-; ---------------------------------------------------------------- the panel
-
 Procedure VideoBegin()
   SpiPeriFromSys(200000)
   SpiBegin(0, 2, 3, -1, 100000)
   Tft796Begin(0, 5, 6, 7) : Tft796Rotate(1) : Tft796Fill(0)
 EndProcedure
 
-Procedure VideoSendRow(y.i, pixels.i)
-  Tft796BlitRect(0, y, #VIDEO_OUT_W, 1, pixels)
+Procedure.i CocoLaunchCore1()
+  ProcedureReturn multicore_launch()
 EndProcedure
 
-; Core 0 asks core 1 to stop drawing (for a capture over USB, or a flash write) and waits for it.
-Procedure CocoParkVideo(on.i)
-  Protected t.i
-  If on
-    Core1ParkRequest = 1
-    t = Micros()
-    While PeekL(@Core1Parked) = 0 And Micros() - t < 200000
-      CocoBoardService()
-    Wend
-  Else
-    Core1ParkRequest = 0
-  EndIf
-EndProcedure
-
-Procedure Core1Main()
-  WorkerReady = 1
-  Repeat
-    If PeekL(@Core1ParkRequest)
-      Core1Parked = 1
-      While PeekL(@Core1ParkRequest) : Wend
-      Core1Parked = 0
-    EndIf
-    VideoFrame()
-  ForEver
-EndProcedure
-
-Global MainT.i, MainE.i
-; Everything before the machine starts. Main() itself only calls this and CocoRun(): it is on the
-; path down to the 6809 core, which holds CpuB and CpuFZ in r4 and r5 (PM1126).
-Procedure CocoBoot()
-  SafetyBoot() : ClockInitKhz(200000) : TimerInit() : UsbSerialInit()
-  ; (no call's result is kept across another call on this path: see CocoRun's note on r4-r7)
-  MainT = Micros()
-  Repeat
-    CocoBoardService()
-    If UsbSerialReady() : Break : EndIf
-  Until Micros() - MainT >= 10000000
-  WaitUs(200000)
-  Say("CoCo 3 PureMetal Pico W clk_khz=") : Num(ClockSysKhz()) : Eol()
-  VideoInit()
-  MainE = CocoLoadRoms(#COCO_ROM_FLASH)
-  CocoRomError = MainE
-  CocoRomMessage(MainE)
-  VideoBegin()
-  Say("spi_hz=") : Num(SpiHz(0)) : Eol()
-  Say("core1 launch=") : Num(multicore_launch()) : Eol()
-  MainT = Micros()
-  Repeat
-    CocoBoardService()
-    If PeekL(@WorkerReady) : Break : EndIf
-  Until Micros() - MainT >= 1000000
-EndProcedure
-
-Procedure Main()
-  CocoBoot()
-  CocoRun()
-EndProcedure
+XIncludeFile "../src/board_common.pmi"

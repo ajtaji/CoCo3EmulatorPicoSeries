@@ -1,0 +1,116 @@
+; The board layer every Pico shares: USB text out, the service call, the LAFVIN ST7796 output, core 1
+; (the picture), boot. The chip's board file sets #COCO_CLOCK_KHZ, #COCO_BOARD_NAME$, the ROM region and
+; supplies VideoBegin() and CocoLaunchCore1().
+
+Declare VideoBegin()
+Declare.i CocoLaunchCore1()
+
+Global Core1ParkRequest.i, Core1Parked.i, WorkerReady.i
+
+Procedure Say(*text.i)
+  Protected p.i, c.i
+  p = *text
+  c = PeekA(p) & 255
+  While c
+    UsbSerialWrite(c)
+    p = p + 1
+    c = PeekA(p) & 255
+  Wend
+EndProcedure
+
+Procedure Num(v.i)
+  Protected d.i
+  If v < 0
+    UsbSerialWrite(45)
+    v = 0 - v
+  EndIf
+  d = 1
+  While v / d >= 10
+    d = d * 10
+  Wend
+  While d > 0
+    UsbSerialWrite(48 + (v / d) % 10)
+    d = d / 10
+  Wend
+EndProcedure
+
+Procedure Eol()
+  UsbSerialWrite(13) : UsbSerialWrite(10)
+  UsbSerialFlush() : UsbSerialTask()
+EndProcedure
+
+Procedure CocoBoardService()
+  UsbSerialTask() : SafetyPet()
+EndProcedure
+
+Procedure WaitUs(us.i)
+  Protected t.i
+  t = Micros()
+  While Micros() - t < us
+    CocoBoardService()
+  Wend
+EndProcedure
+
+; ---------------------------------------------------------------- the panel
+
+Procedure VideoSendRow(y.i, pixels.i)
+  Tft796BlitRect(0, y, #VIDEO_OUT_W, 1, pixels)
+EndProcedure
+
+; Core 0 asks core 1 to stop drawing (for a capture over USB, or a flash write) and waits for it.
+Procedure CocoParkVideo(on.i)
+  Protected t.i
+  If on
+    Core1ParkRequest = 1
+    t = Micros()
+    While PeekL(@Core1Parked) = 0 And Micros() - t < 200000
+      CocoBoardService()
+    Wend
+  Else
+    Core1ParkRequest = 0
+  EndIf
+EndProcedure
+
+Procedure Core1Main()
+  WorkerReady = 1
+  Repeat
+    If PeekL(@Core1ParkRequest)
+      Core1Parked = 1
+      While PeekL(@Core1ParkRequest) : Wend
+      Core1Parked = 0
+    EndIf
+    VideoFrame()
+  ForEver
+EndProcedure
+
+Global MainT.i, MainE.i
+; Everything before the machine starts. Main() itself only calls this and CocoRun(): it is on the
+; path down to the 6809 core, which holds CpuB and CpuFZ in r4 and r5 (PM1126).
+Procedure CocoBoot()
+  SafetyBoot() : ClockInitKhz(#COCO_CLOCK_KHZ) : TimerInit() : UsbSerialInit()
+  ; (no call's result is kept across another call on this path: see CocoRun's note on r4-r7)
+  MainT = Micros()
+  Repeat
+    CocoBoardService()
+    If UsbSerialReady() : Break : EndIf
+  Until Micros() - MainT >= 10000000
+  WaitUs(200000)
+  Say("CoCo 3 PureMetal ") : Say(#COCO_BOARD_NAME$) : Say(" clk_khz=") : Num(ClockSysKhz()) : Eol()
+  VideoInit()
+  MainE = CocoLoadRoms(#COCO_ROM_FLASH)
+  CocoRomError = MainE
+  CocoRomMessage(MainE)
+  VideoBegin()
+  Say("spi_hz=") : Num(SpiHz(0)) : Eol()
+  Say("core1 launch=") : Num(CocoLaunchCore1()) : Eol()
+  MainT = Micros()
+  Repeat
+    CocoBoardService()
+    If PeekL(@WorkerReady) : Break : EndIf
+  Until Micros() - MainT >= 1000000
+EndProcedure
+
+Procedure Main()
+  CocoBoot()
+  CocoRun()
+EndProcedure

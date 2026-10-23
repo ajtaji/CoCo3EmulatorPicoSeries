@@ -1,0 +1,27 @@
+; Pico 2 W (RP2350, Arm): the same LAFVIN ST7796 wiring as the Pico W (SPI0 GP2/GP3, CS GP5, DC GP6,
+; RST GP7), landscape 480 x 320; 150 MHz, the SPI from clk_sys (75 MHz). Core 1 is the second M33
+; (multicore_smp.pico2). The rest is src/board_common.pmi.
+
+#COCO_CLOCK_KHZ = 150000
+#COCO_BOARD_NAME$ = "Pico 2 W"
+
+; The ROM region: $3E0000-$3EFFFF of the 4 MB flash. Not the Pico W's $140000: on a Pico 2 W the NES
+; ROM store's games run from $50000 to $1FEFFF, the radio firmware sits at $200000 and PDP-11 packs
+; from $240000; the Bluetooth link key is the last sector, $3FF000. Build the region with
+; make_rom_region.py --target rp2350 --offset 0x3E0000.
+#COCO_ROM_OFFSET = $3E0000
+#COCO_ROM_FLASH = $10000000 + #COCO_ROM_OFFSET
+
+Procedure VideoBegin()
+  SpiPeriFromSys(ClockSysConfigKhz())
+  SpiBegin(0, 2, 3, -1, 100000)
+  Tft796Begin(0, 5, 6, 7) : Tft796Rotate(1) : Tft796Fill(0)
+EndProcedure
+
+Procedure.i CocoLaunchCore1()
+  McCore1ReleaseHold()
+  If McLaunchCore1() = 6 : ProcedureReturn 1 : EndIf
+  ProcedureReturn 0
+EndProcedure
+
+XIncludeFile "../src/board_common.pmi"
