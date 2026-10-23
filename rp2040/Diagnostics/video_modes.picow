@@ -1,0 +1,124 @@
+; Diagnostic: the CoCo 3 machine with no CPU. Writes test screens into guest RAM and steps through
+; the video modes every 4 seconds, so the renderer and the panel can be checked before a 6809 runs.
+; Monitor (send $1D then the letter): t = the text on the screen, c = capture the picture, s = status.
+; Without a ROM in flash the glyphs are a test pattern: each character's code in binary.
+#VIDEO_RGB = 0
+EnableExplicit
+XIncludeFile "RP2040/Lib/clocks.pico"
+XIncludeFile "RP2040/Lib/timer.pico"
+XIncludeFile "RP2040/Lib/uart.pico"
+XIncludeFile "RP2040/Lib/usb_serial.pico"
+XIncludeFile "RP2040/Lib/safety.pico"
+XIncludeFile "RP2040/Lib/spi.pico"
+XIncludeFile "RP2040/Lib/st7796.pico"
+XIncludeFile "../../src/cpu_none.pmi"
+XIncludeFile "../../src/machine.pmi"
+XIncludeFile "../../src/video.pmi"
+XIncludeFile "../../src/keyboard.pmi"
+XIncludeFile "../../src/sound.pmi"
+XIncludeFile "../../src/disk.pmi"
+XIncludeFile "../../src/coco3.pmi"
+XIncludeFile "../board.pico"
+
+Global DiagMode.i, DiagNext.i
+
+Procedure DiagFont()
+  Protected c.i, r.i
+  If VideoFontLoaded : ProcedureReturn : EndIf
+  For c = 0 To 127
+    CocoFont(c * 8) = $FF
+    For r = 1 To 6 : CocoFont(c * 8 + r) = $81 | ((c << 1) & $7E) : Next
+    CocoFont(c * 8 + 7) = $FF
+  Next
+EndProcedure
+
+Procedure DiagPoke(phys.i, v.i)
+  PokeA(CocoPhys(phys), v)
+EndProcedure
+
+; Palette as CoCo 3 BASIC sets it for a composite monitor (12 = green, 13 = dark for the VDG text).
+Procedure DiagPalette()
+  Protected i.i
+  For i = 0 To 15 : GimePal(i) = PeekA(?DiagPal + i) : Next
+  GimePalSerial = GimePalSerial + 1
+EndProcedure
+
+Procedure DiagSetMode(m.i)
+  Protected i.i, x.i, y.i
+  DiagPalette()
+  Select m
+    Case 0
+      ; VDG 32 x 16 text at $70400 (SAM F = 2, $FF9D = $E0 for the top 64 KB): all 256 codes
+      Gime(0) = $CC : Gime(9) = 0 : Gime($C) = $0F : Gime($D) = $E0 : Gime($E) = 0
+      SamBits = (2 << 3) : PiaOutB(1) = 0
+      For i = 0 To 511 : DiagPoke($70400 + i, i & 255) : Next
+      Say("MODE 0 vdg text 32x16, codes 0-255") : Eol()
+    Case 1
+      ; GIME 40 x 24 text with attributes at $6C000 (all 8 x 8 colour pairs, blink on row 2)
+      Gime(0) = $4C : Gime(8) = $03 : Gime(9) = $05 : Gime($A) = 0 : Gime($C) = 0
+      Gime($D) = $D8 : Gime($E) = 0 : Gime($F) = 0
+      For y = 0 To 23
+        For x = 0 To 39
+          DiagPoke($6C000 + (y * 40 + x) * 2, 32 + ((y * 40 + x) % 96))
+          i = ((x & 7) << 3) | (y & 7)
+          If y = 2 : i = i | $80 : EndIf
+          If y = 3 : i = i | $40 : EndIf
+          DiagPoke($6C000 + (y * 40 + x) * 2 + 1, i)
+        Next
+      Next
+      For i = 0 To 15 : GimePal(i) = PeekA(?DiagRgb + i) : Next
+      Say("MODE 1 gime text 40x24 attributes") : Eol()
+    Case 2
+      ; GIME 80 x 24 text, no attributes
+      Gime(0) = $4C : Gime(8) = $03 : Gime(9) = $14 : Gime($D) = $D8 : Gime($E) = 0 : Gime($F) = 0
+      For i = 0 To 80 * 24 - 1 : DiagPoke($6C000 + i, 32 + (i % 95)) : Next
+      GimePal(0) = 0 : GimePal(1) = $3F
+      Say("MODE 2 gime text 80x24") : Eol()
+    Case 3
+      ; GIME 320 x 192 x 16: 16 vertical colour bars
+      Gime(0) = $4C : Gime(8) = $80 : Gime(9) = $1E : Gime($A) = $3F : Gime($D) = $C0 : Gime($E) = 0 : Gime($F) = 0
+      For y = 0 To 191
+        For x = 0 To 159 : DiagPoke($60000 + y * 160 + x, ((x / 10) * $11) & $FF) : Next
+      Next
+      For i = 0 To 15 : GimePal(i) = PeekA(?DiagRgb + i) : Next
+      Say("MODE 3 gime graphics 320x192x16 bars, white border") : Eol()
+    Case 4
+      ; GIME 640 x 225 x 4: diagonal lines
+      Gime(0) = $4C : Gime(8) = $80 : Gime(9) = $7D : Gime($A) = $09 : Gime($D) = $C0 : Gime($E) = 0 : Gime($F) = 0
+      For y = 0 To 224
+        For x = 0 To 159 : DiagPoke($60000 + y * 160 + x, 0) : Next
+        x = (y * 2) % 640
+        DiagPoke($60000 + y * 160 + x / 4, 3 << (6 - (x & 3) * 2))
+      Next
+      GimePal(0) = 0 : GimePal(1) = $24 : GimePal(2) = $12 : GimePal(3) = $3F
+      Say("MODE 4 gime graphics 640x225x4 diagonal") : Eol()
+    Case 5
+      ; VDG semigraphics 4 colour blocks and a 256 x 192 resolution graphics screen top half
+      Gime(0) = $CC : Gime(9) = 0 : Gime($C) = $0F : Gime($D) = $E0 : Gime($E) = 0
+      SamBits = (2 << 3) : PiaOutB(1) = 0
+      For i = 0 To 511 : DiagPoke($70400 + i, $80 | (i & $7F)) : Next
+      Say("MODE 5 vdg semigraphics 4") : Eol()
+  EndSelect
+  VideoForce = 1
+EndProcedure
+
+Procedure CocoBoardSetup()
+  DiagFont()
+  DiagMode = 0 : DiagSetMode(0) : DiagNext = CocoFrames + 240
+EndProcedure
+
+Procedure CocoFrameHook()
+  If CocoFrames - DiagNext >= 0
+    DiagMode = (DiagMode + 1) % 6 : DiagSetMode(DiagMode)
+    DiagNext = CocoFrames + 240
+  EndIf
+EndProcedure
+
+DataSection
+  DiagPal:                               ; a test palette of 16 composite colours
+  Data.a $00, $12, $24, $36, $09, $1B, $2D, $3F, $07, $19, $2B, $3D, $0E, $20, $32, $04
+  DiagRgb:
+  Data.a $00, $3F, $24, $12, $09, $36, $2D, $1B, $07, $38, $26, $14, $0B, $3C, $2A, $15
+EndDataSection
+
+Main()

@@ -1,0 +1,17 @@
+# rp2040/Diagnostics/video_modes.picow: every mode rendered, read back over USB as a picture.
+expect 15 MODE 0 vdg text
+screen 5 TEXT_BEGIN cols=32 rows=16
+capture build/mode0.png
+expect 6 MODE 1 gime text
+screen 3 TEXT_BEGIN cols=40 rows=24
+capture build/mode1.png
+expect 6 MODE 2 gime text
+capture build/mode2.png
+expect 6 MODE 3 gime graphics
+capture build/mode3.png
+expect 6 MODE 4 gime graphics
+capture build/mode4.png
+expect 6 MODE 5 vdg semigraphics
+capture build/mode5.png
+cmd s
+expect 3 COCO frames=

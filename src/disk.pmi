@@ -1,0 +1,9 @@
+; $FF40-$FF5F: the cartridge's I/O. The FD-502 floppy controller (WD1793) goes here next; until then
+; the slot reads as an empty bus and writes go nowhere.
+
+Procedure.i CocoDiskRead(reg.i)
+  ProcedureReturn $FF
+EndProcedure
+
+Procedure CocoDiskWrite(reg.i, v.i)
+EndProcedure

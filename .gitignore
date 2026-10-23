@@ -1,0 +1,12 @@
+build/
+firmware/*.log
+firmware/*.dbg
+firmware/*.sym*
+firmware/*.cycles.txt
+firmware/*.asm
+private/
+*.rom
+*.ROM
+*.dsk
+*.DSK
+__pycache__/

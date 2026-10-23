@@ -1,0 +1,338 @@
+; CoCo 3 video: the GIME's text and graphics modes and its MC6847-compatible (VDG) modes, rendered
+; one line at a time from guest RAM. Chip-independent; the display output is the board file's
+; VideoSendRow(y, *pixels) (480 RGB565 pixels, one row of the 480 x 320 panel).
+;
+; GEOMETRY. The GIME's picture is 640 samples wide (non-"wide" modes use the middle 512, with 64 of
+; border each side) and here 240 lines tall: the body (192, 200 or 225 lines) centred, the rest
+; border. 640 x 240 is shown on 480 x 320: three output pixels for every four samples, four output
+; rows for every three lines. A line is sent only when what it shows changed (a 32-bit sum of its
+; pixels against the last one sent), so a still screen costs the SPI nothing.
+;
+; COLOURS. The 64 GIME colours as a composite (TV) monitor shows them, which is what BASIC's
+; default palette is chosen for: MAME gime.cpp get_composite_color (BSD-3-Clause, Nathan Woods);
+; #VIDEO_RGB = 1 uses the RGB monitor's 2-bit-per-gun decoding instead.
+;
+; THE FONT is not in this repository: the GIME's character generator is inside the chip. The
+; 8 x 8 glyphs come from the HPRINT table in the user's own CoCo 3 ROM (VideoLoadFont).
+
+; The wrapper sets #VIDEO_RGB (0 composite, 1 RGB monitor) before including this file.
+
+#VIDEO_LINES = 240
+#VIDEO_OUT_W = 480
+#VIDEO_OUT_H = 320
+
+Global Dim VideoColor.u(64)              ; GIME colour (6 bits) -> RGB565
+Global Dim VideoPal.u(17)                ; palette registers resolved, 16 = border
+Global Dim VideoSamples.a(640)           ; one line, as palette indices
+Global Dim VideoOut.u(480)               ; one output row
+Global Dim VideoMap.u(480)               ; output x -> sample
+Global Dim VideoRowFirst.u(240)          ; source line -> first output row
+Global Dim VideoRowCount.a(240)          ; ... and how many rows show it (1 or 2)
+Global Dim VideoHash.l(240)
+Global Dim CocoFont.a(1024)              ; 128 characters x 8 rows, bit 7 = leftmost
+Global VideoFontLoaded.i
+Global VideoForce.i, VideoFrames.i, VideoRowsSent.i, VideoLastPal.i = -1
+
+Declare VideoSendRow(y.i, pixels.i)
+
+Procedure VideoInit()
+  Protected i.i, c.i, r.i, g.i, b.i, t.i
+  For c = 0 To 63
+    CompilerIf #VIDEO_RGB = 1
+      r = (((c >> 4) & 2) | ((c >> 2) & 1)) * $55
+      g = (((c >> 3) & 2) | ((c >> 1) & 1)) * $55
+      b = (((c >> 2) & 2) | (c & 1)) * $55
+    CompilerElse
+      t = PeekL(?VideoComposite + c * 4)
+      r = (t >> 16) & 255 : g = (t >> 8) & 255 : b = t & 255
+    CompilerEndIf
+    VideoColor(c) = ((r & $F8) << 8) | ((g & $FC) << 3) | (b >> 3)
+  Next
+  For i = 0 To 479 : VideoMap(i) = (i * 4) / 3 : Next
+  For i = 0 To 239
+    VideoRowFirst(i) = (i * 4 + 2) / 3
+    VideoRowCount(i) = ((i + 1) * 4 + 2) / 3 - VideoRowFirst(i)
+  Next
+  VideoForce = 1
+EndProcedure
+
+; Copy the HPRINT glyphs (ASCII 32-127, 8 bytes each) from the ROM image at offset `offset`.
+Procedure VideoLoadFont(rom.i, offset.i)
+  Protected i.i
+  For i = 0 To 1023 : CocoFont(i) = 0 : Next
+  If rom = 0 Or offset <= 0 : ProcedureReturn : EndIf
+  For i = 0 To 767
+    CocoFont(256 + i) = PeekA(rom + offset + i)
+  Next
+  VideoFontLoaded = 1
+EndProcedure
+
+; The row of glyph `ch` (ASCII 0-127) for character line `row` (0-7; other rows are blank).
+Macro VideoGlyph(ch, row)
+  CocoFont(((ch) & 127) * 8 + (row))
+EndMacro
+
+; ---------------------------------------------------------------- per-frame mode decoding
+
+Global VdLegacy.i, VdBodyTop.i, VdBodyLines.i, VdBase.i, VdPitch.i, VdLpr.i, VdScroll.i
+Global VdMode.i, VdBytes.i, VdBpp.i, VdScale.i, VdLeft.i, VdAttr.i, VdText.i, VdFF22.i
+
+; Read the registers once per line (they may change between lines; the GIME latches only the start
+; address at the top of the frame, which matters only to raster tricks).
+Procedure VideoDecode()
+  Protected v.i, lpr.i, hres.i
+  VdLegacy = Gime(0) & $80
+  VdBodyLines = GimeBodyLines()
+  VdFF22 = PiaOutB(1)
+  If VdLegacy
+    VdBase = ((SamBits >> 3) & $7F) << 9
+    VdBase = VdBase + ((Gime($E) & $3F) << 3) + ((Gime($D) & $E0) << 11)
+    VdLeft = 64
+    If VdFF22 & $80
+      ; graphics
+      VdText = 0
+      v = (VdFF22 >> 4) & 7           ; GM2 GM1 GM0
+      VdBytes = 32
+      If (SamBits & 1) And (v = 0 Or v = 1 Or v = 3 Or v = 5) : VdBytes = 16 : EndIf
+      If v & 1 : VdBpp = 1 : Else : VdBpp = 2 : EndIf
+      VdScale = 512 / (VdBytes * 8 / VdBpp)
+      VdLpr = PeekA(?VideoLegacyLpr + (SamBits & 7))
+    Else
+      VdText = 1 : VdBytes = 32 : VdScale = 2 : VdAttr = 0
+      VdLpr = PeekA(?VideoAlphaLpr + (Gime($C) & 15))
+    EndIf
+    VdPitch = VdBytes
+    VdScroll = 0
+  Else
+    VdBase = (Gime($E) << 3) + (Gime($D) << 11)
+    hres = (Gime(9) >> 2) & 7
+    If Gime(9) & 4 : VdLeft = 0 : Else : VdLeft = 64 : EndIf
+    If Gime(8) & $80
+      VdText = 0
+      VdBytes = PeekA(?VideoHres + hres)
+      v = Gime(9) & 3
+      If v = 0 : VdBpp = 1 : ElseIf v = 1 : VdBpp = 2 : Else : VdBpp = 4 : EndIf
+      ; 128 and 160 bytes a row have no 2-colour form: they show as 4 colours (MAME update_screen)
+      If VdBytes >= 128 And VdBpp = 1 : VdBpp = 2 : EndIf
+      If VdLeft = 0 : VdScale = 640 : Else : VdScale = 512 : EndIf
+      VdScale = VdScale / (VdBytes * 8 / VdBpp)
+      If VdScale < 1 : VdScale = 1 : EndIf
+      VdPitch = VdBytes
+    Else
+      VdText = 1
+      ; 32, 40, 64 or 80 characters (HRES bits 4 and 2), attributes with CRES bit 0
+      VdBytes = 32
+      If Gime(9) & $04 : VdBytes = 40 : EndIf
+      If Gime(9) & $10 : VdBytes = VdBytes * 2 : EndIf
+      VdAttr = Gime(9) & 1
+      If VdBytes >= 64 : VdScale = 1 : Else : VdScale = 2 : EndIf
+      VdPitch = VdBytes * (1 + VdAttr)
+    EndIf
+    If Gime($F) & $80 : VdPitch = 256 : EndIf
+    lpr = Gime(8) & 7
+    VdLpr = PeekA(?VideoGimeLpr + lpr)
+    VdScroll = Gime($C) & 15
+  EndIf
+  If VdLpr = 0 : VdLpr = 1 : EndIf
+  VdBodyTop = (#VIDEO_LINES - VdBodyLines) / 2
+EndProcedure
+
+; ---------------------------------------------------------------- one line
+
+Procedure VideoBorderLine(index.i)
+  Protected x.i
+  For x = 0 To 639 : VideoSamples(x) = index : Next
+EndProcedure
+
+; GIME graphics: VdBytes bytes of VdBpp bits per pixel, each pixel VdScale samples wide.
+Procedure VideoGraphics(addr.i, offset.i, base.i)
+  Protected i.i, byte.i, k.i, x.i, c.i, s.i, shift.i, mask.i, ppb.i
+  x = VdLeft
+  ppb = 8 / VdBpp
+  mask = (1 << VdBpp) - 1
+  For i = 0 To VdBytes - 1
+    byte = PeekA(CocoPhys(addr + ((offset + i) & $FF)))
+    shift = 8 - VdBpp
+    For k = 1 To ppb
+      c = base + ((byte >> shift) & mask)
+      For s = 1 To VdScale
+        VideoSamples(x) = c : x = x + 1
+      Next
+      shift = shift - VdBpp
+    Next
+  Next
+EndProcedure
+
+; GIME text: VdBytes characters, 8 dots each, VdScale samples per dot.
+Procedure VideoGimeText(addr.i, offset.i, row.i)
+  Protected i.i, ch.i, attr.i, fg.i, bg.i, glyph.i, bit.i, x.i, s.i, step.i, under.i, c.i
+  x = VdLeft
+  step = 1 + VdAttr
+  under = -1
+  If VdAttr
+    Select Gime(8) & 7
+      Case 3 : under = 7
+      Case 4 : under = 8
+      Case 5 : under = 8
+      Case 6 : under = 9
+    EndSelect
+  EndIf
+  For i = 0 To VdBytes - 1
+    ch = PeekA(CocoPhys(addr + ((offset + i * step) & $FF)))
+    If VdAttr
+      attr = PeekA(CocoPhys(addr + ((offset + i * step + 1) & $FF)))
+      If (attr & $80) And GimeBlink
+        ch = $20 : attr = attr & $BF
+      EndIf
+      bg = attr & 7 : fg = 8 + ((attr >> 3) & 7)
+    Else
+      attr = 0 : bg = 0 : fg = 1
+    EndIf
+    If row < 8 : glyph = VideoGlyph(ch, row) : Else : glyph = 0 : EndIf
+    If (attr & $40) And row = under : glyph = $FF : EndIf
+    For bit = 7 To 0 Step -1
+      If (glyph >> bit) & 1 : c = fg : Else : c = bg : EndIf
+      For s = 1 To VdScale
+        VideoSamples(x) = c : x = x + 1
+      Next
+    Next
+  Next
+EndProcedure
+
+; VDG (MC6847-compatible) text and semigraphics 4, 32 characters of 12 rows.
+Procedure VideoVdgText(addr.i, row.i)
+  Protected i.i, d.i, code.i, glyph.i, bit.i, x.i, c0.i, c1.i, c.i, inv.i, lower.i, sg.i
+  x = 64
+  If VdFF22 & 8 : c0 = 14 : Else : c0 = 12 : EndIf
+  For i = 0 To 31
+    d = PeekA(CocoPhys(addr + i))
+    If d & $80
+      ; semigraphics 4: 2 x 2 blocks in colour (d >> 4) & 7, dark (palette 8) where clear
+      If row < 6 : sg = (d >> 2) & 3 : Else : sg = d & 3 : EndIf
+      c1 = (d >> 4) & 7
+      For bit = 0 To 15
+        If bit < 8
+          If sg & 2 : c = c1 : Else : c = 8 : EndIf
+        Else
+          If sg & 1 : c = c1 : Else : c = 8 : EndIf
+        EndIf
+        VideoSamples(x) = c : x = x + 1
+      Next
+    Else
+      code = d & $3F
+      inv = Bool((d & $40) <> 0)
+      ; the GIME behaves as an MC6847T1: GM1 inverts the sense, and GM0 with INV clear shows
+      ; codes 0-31 as lower case (inverted)
+      If VdFF22 & $20 : inv = inv ! 1 : EndIf
+      lower = Bool((d & $40) = 0 And (VdFF22 & $10) <> 0)
+      If code < 32
+        If lower : glyph = code + 96 : inv = inv ! 1 : Else : glyph = code + 64 : EndIf
+      Else
+        glyph = code
+      EndIf
+      If row >= 1 And row <= 8 : glyph = VideoGlyph(glyph, row - 1) : Else : glyph = 0 : EndIf
+      If inv : glyph = glyph ! $FF : EndIf
+      For bit = 7 To 0 Step -1
+        If (glyph >> bit) & 1 : c = c0 + 1 : Else : c = c0 : EndIf
+        VideoSamples(x) = c : VideoSamples(x + 1) = c : x = x + 2
+      Next
+    EndIf
+  Next
+EndProcedure
+
+; VDG graphics: base palette index from the mode and CSS.
+Procedure VideoVdgGraphics(addr.i)
+  Protected base.i, v.i
+  v = (VdFF22 >> 4) & 7
+  If VdBpp = 1
+    If VdFF22 & 8 : base = 10 : Else : base = 8 : EndIf
+  Else
+    If VdFF22 & 8 : base = 4 : Else : base = 0 : EndIf
+  EndIf
+  VideoGraphics(addr, 0, base)
+EndProcedure
+
+; The legacy border colour (a 6-bit colour, not a palette index): MAME gime.cpp update_border.
+Procedure.i VideoLegacyBorder()
+  If VdFF22 & $80
+    If VdFF22 & 8 : ProcedureReturn $3F : EndIf
+    ProcedureReturn $12
+  EndIf
+  If (VdFF22 & $40) And (VdFF22 & $20) = 0
+    If VdFF22 & 8 : ProcedureReturn $26 : EndIf
+    ProcedureReturn $12
+  EndIf
+  ProcedureReturn 0
+EndProcedure
+
+; Render source line `line` (0-239) into VideoOut. Returns the line's hash.
+Procedure.l VideoRenderLine(line.i)
+  Protected b.i, rowIndex.i, row.i, addr.i, x.i, sum.l, i.i, offset.i, border.i
+  VideoDecode()
+  If VdLegacy : border = VideoLegacyBorder() : Else : border = Gime($A) & $3F : EndIf
+  For i = 0 To 15 : VideoPal(i) = VideoColor(GimePal(i)) : Next
+  VideoPal(16) = VideoColor(border)
+  b = line - VdBodyTop
+  If b < 0 Or b >= VdBodyLines
+    VideoBorderLine(16)
+  Else
+    If VdLpr = 255
+      rowIndex = 0 : row = (b + VdScroll) & 15
+    Else
+      rowIndex = (b + VdScroll) / VdLpr : row = (b + VdScroll) % VdLpr
+    EndIf
+    addr = VdBase + rowIndex * VdPitch
+    If VdLeft
+      For x = 0 To 63 : VideoSamples(x) = 16 : VideoSamples(x + 576) = 16 : Next
+    EndIf
+    If VdLegacy
+      If VdText : VideoVdgText(addr, row) : Else : VideoVdgGraphics(addr) : EndIf
+    Else
+      offset = (Gime($F) & $7F) * 2
+      If VdText : VideoGimeText(addr, offset, row) : Else : VideoGraphics(addr, offset, 0) : EndIf
+    EndIf
+  EndIf
+  sum = 0
+  For x = 0 To 479
+    VideoOut(x) = VideoPal(VideoSamples(VideoMap(x)))
+    sum = ((sum << 1) | ((sum >> 31) & 1)) + VideoOut(x)
+  Next
+  ProcedureReturn sum
+EndProcedure
+
+; One pass over the picture: render every line, send the ones that changed.
+Procedure VideoFrame()
+  Protected line.i, h.l, k.i, force.i
+  force = VideoForce : VideoForce = 0
+  For line = 0 To #VIDEO_LINES - 1
+    h = VideoRenderLine(line)
+    If force Or h <> VideoHash(line)
+      VideoHash(line) = h
+      For k = 0 To VideoRowCount(line) - 1
+        VideoSendRow(VideoRowFirst(line) + k, @VideoOut(0))
+        VideoRowsSent = VideoRowsSent + 1
+      Next
+    EndIf
+  Next
+  VideoFrames = VideoFrames + 1
+EndProcedure
+
+DataSection
+  VideoHres:
+  Data.a 16, 20, 32, 40, 64, 80, 128, 160
+  VideoGimeLpr:                          ; $FF98 LPR; 255 = one row for the whole field
+  Data.a 1, 1, 2, 8, 9, 10, 11, 255
+  VideoLegacyLpr:                        ; SAM V2-V0 in graphics (MAME gime_legacy_lines_per_row_graphic)
+  Data.a 3, 3, 3, 2, 2, 1, 1, 1
+  VideoAlphaLpr:                         ; $FF9C in VDG text (MAME ff9c_lines_per_row_alpha)
+  Data.a 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 4, 3, 2, 1, 12
+  VideoComposite:
+  Data.l $000000, $004c00, $004300, $0a3100, $2f1b00, $550100, $6c0000, $770006
+  Data.l $71004b, $5c008b, $3b00b8, $1100ca, $001499, $002c62, $004011, $004b00
+  Data.l $2d2d2d, $069800, $288f00, $537d00, $786700, $a04c00, $b63402, $c3224c
+  Data.l $bd1693, $a814d5, $881cfe, $5e2cff, $105ee9, $0076b2, $008b60, $009618
+  Data.l $747474, $41d714, $62cf00, $8ebd00, $b4a700, $dd8c01, $f5733a, $fe6085
+  Data.l $fd53ce, $e950ff, $c958ff, $9e67ff, $4e9aff, $36b3f7, $26c9a3, $2bd558
+  Data.l $fdfdfe, $88e85a, $a1e03f, $bed238, $d8c342, $f1b161, $fea08d, $fe95bf
+  Data.l $fd8ef1, $ef8eff, $d895ff, $b9a1ff, $86c4ff, $78d4f2, $71e2b6, $ffffff
+EndDataSection

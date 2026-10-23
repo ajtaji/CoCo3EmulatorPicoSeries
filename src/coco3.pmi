@@ -1,0 +1,249 @@
+﻿; The CoCo 3 machine loop (core 0): the CPU a scanline at a time, the scanline events, the keyboard,
+; pacing to the real machine's speed, and the USB monitor. Chip-independent; the board file supplies
+; Say/Num/Eol, CocoBoardService() (USB and watchdog) and the flash address of the ROM region.
+;
+; THE ROM REGION (tools/make_rom_region.py writes it, PureMetalForge --storage-write puts it in flash):
+;   +$0000  "CC3R", version 1, ROM bytes, ROM CRC-32, cartridge bytes, cartridge CRC-32, font offset
+;   +$1000  the CoCo 3 internal ROM (32 KB)
+;   +$9000  a cartridge ROM (Disk BASIC), 0 - 16 KB
+; The ROMs are the user's own files; they are never in this repository or in the firmware image.
+
+#ROM_REGION_BYTES = $10000
+
+Global CocoFullSpeed.i, CocoReport.i = 1, CocoMonitor.i
+Global CocoRunUs.i, CocoWaitUs.i, CocoLate.i, CocoRomError.i
+Global CocoStatFrames.i, CocoStatCycles.i, CocoStatAt.i, CocoStatRun.i, CocoStatVideo.i
+
+Declare CocoBoardService()
+Declare CocoParkVideo(on.i)
+Declare CocoBoardSetup()                ; the wrapper's: after every reset (a diagnostic sets up a screen here)
+Declare CocoFrameHook()                 ; the wrapper's: once a frame
+
+; ---------------------------------------------------------------- the ROMs
+
+Procedure.l CocoCrc32(addr.i, n.i)
+  Protected crc.l, i.i, k.i
+  crc = -1
+  For i = 0 To n - 1
+    crc = crc ! PeekA(addr + i)
+    For k = 1 To 8
+      If crc & 1
+        crc = ((crc >> 1) & $7FFFFFFF) ! $EDB88320
+      Else
+        crc = (crc >> 1) & $7FFFFFFF
+      EndIf
+    Next
+  Next
+  ProcedureReturn ~crc
+EndProcedure
+
+; Returns 0, or an error number that CocoRomMessage explains.
+Procedure.i CocoLoadRoms(region.i)
+  Protected romBytes.i, cartBytes.i, font.i
+  CocoRom = 0 : CocoCart = 0 : CocoCartBytes = 0
+  If PeekL(region) <> $52334343            ; "CC3R"
+    ProcedureReturn 1
+  EndIf
+  If PeekL(region + 4) <> 1 : ProcedureReturn 2 : EndIf
+  romBytes = PeekL(region + 8)
+  If romBytes <> 32768 : ProcedureReturn 3 : EndIf
+  If CocoCrc32(region + $1000, romBytes) <> PeekL(region + 12) : ProcedureReturn 4 : EndIf
+  cartBytes = PeekL(region + 16)
+  If cartBytes <> 0 And cartBytes <> 8192 And cartBytes <> 16384 : ProcedureReturn 5 : EndIf
+  If cartBytes
+    If CocoCrc32(region + $9000, cartBytes) <> PeekL(region + 20) : ProcedureReturn 6 : EndIf
+    CocoCart = region + $9000 : CocoCartBytes = cartBytes
+  EndIf
+  CocoRom = region + $1000
+  font = PeekL(region + 24)
+  If font > 0 And font <= 32768 - 768
+    VideoLoadFont(CocoRom, font)
+  EndIf
+  ProcedureReturn 0
+EndProcedure
+
+Procedure CocoRomMessage(e.i)
+  Select e
+    Case 0 : Say("CoCo 3 ROM loaded from flash")
+    Case 1 : Say("Error 1: no CoCo 3 ROM in flash (the coco_rom region does not start with CC3R). Write it with tools/load_roms.ps1 and your own coco3.rom.")
+    Case 2 : Say("Error 2: the ROM region was written by a newer tool than this firmware reads. Rebuild the firmware or the region with the same tools.")
+    Case 3 : Say("Error 3: the ROM region does not hold a 32 KB CoCo 3 ROM. Check the file given to make_rom_region.py.")
+    Case 4 : Say("Error 4: the CoCo 3 ROM in flash fails its CRC-32: the region is damaged or half written. Write it again with tools/load_roms.ps1.")
+    Case 5 : Say("Error 5: the cartridge ROM in the region is not 8 or 16 KB. Check the Disk BASIC file given to make_rom_region.py.")
+    Case 6 : Say("Error 6: the cartridge ROM in flash fails its CRC-32. Write the region again with tools/load_roms.ps1.")
+  EndSelect
+  Eol()
+EndProcedure
+
+; ---------------------------------------------------------------- the text on the screen, over USB
+
+Procedure CocoTextDump()
+  Protected rows.i, row.i, i.i, d.i, c.i, addr.i, step.i, cols.i
+  VideoDecode()
+  If VdText = 0
+    Say("TEXT none (graphics mode)") : Eol() : ProcedureReturn
+  EndIf
+  cols = VdBytes
+  If VdLpr = 255 : rows = 1 : Else : rows = VdBodyLines / VdLpr : EndIf
+  step = 1
+  If VdLegacy = 0 : step = 1 + VdAttr : EndIf
+  Say("TEXT_BEGIN cols=") : Num(cols) : Say(" rows=") : Num(rows) : Eol()
+  For row = 0 To rows - 1
+    addr = VdBase + row * VdPitch
+    For i = 0 To cols - 1
+      d = PeekA(CocoPhys(addr + i * step))
+      If VdLegacy
+        If d & $80
+          c = 35                         ; semigraphics: '#'
+        Else
+          c = d & $3F
+          If c < 32
+            If d & $40 : c = c + 64 : Else : c = c + 96 : EndIf
+          EndIf
+        EndIf
+      Else
+        c = d & $7F
+        If c < 32 : c = 46 : EndIf
+      EndIf
+      UsbSerialWrite(c)
+    Next
+    Eol()
+  Next
+  Say("TEXT_END") : Eol()
+EndProcedure
+
+; ---------------------------------------------------------------- the rendered picture, over USB
+
+; CAP_BEGIN, then 240 lines x 480 RGB565 pixels (low byte first), then CAP_END. The same renderer the
+; panel gets, run here on core 0 with core 1 parked.
+Procedure CocoCapture()
+  Protected line.i, x.i
+  CocoParkVideo(1)
+  Say("CAP_BEGIN w=480 h=240") : Eol()
+  For line = 0 To #VIDEO_LINES - 1
+    VideoRenderLine(line)
+    For x = 0 To 479
+      UsbSerialWrite(VideoOut(x) & 255) : UsbSerialWrite(VideoOut(x) >> 8)
+    Next
+    CocoBoardService()
+  Next
+  Eol() : Say("CAP_END") : Eol()
+  CocoParkVideo(0)
+EndProcedure
+
+; ---------------------------------------------------------------- status
+
+Procedure CocoStatus(now.i)
+  Protected dt.i, frames.i, cycles.i, run.i
+  dt = now - CocoStatAt
+  If dt <= 0 : ProcedureReturn : EndIf
+  frames = CocoFrames - CocoStatFrames
+  cycles = CpuCycles - CocoStatCycles
+  run = CocoRunUs - CocoStatRun
+  Say("COCO frames=") : Num(CocoFrames)
+  Say(" fps_x100=") : Num((frames * 100000) / (dt / 1000))
+  Say(" cpu_khz=") : Num(cycles / (dt / 1000))
+  Say(" fast=") : Num(CocoFast)
+  ; the share of wall time the emulation needed: under 100 it keeps up with a real CoCo 3
+  Say(" busy_pct=") : Num((run / (dt / 1000)) / 10)
+  Say(" pc=") : Num(CocoCpuPc())
+  Say(" video_fps_x10=") : Num(((VideoFrames - CocoStatVideo) * 10000) / (dt / 1000))
+  Say(" rows_sent=") : Num(VideoRowsSent)
+  Say(" keys=") : Num(KeyTyped) : Say(" queued=") : Num(KeyPending())
+  Say(" sound_samples=") : Num(SoundSamples)
+  Say(" late=") : Num(CocoLate)
+  Eol()
+  CocoStatAt = now : CocoStatFrames = CocoFrames : CocoStatCycles = CpuCycles
+  CocoStatRun = CocoRunUs : CocoStatVideo = VideoFrames
+EndProcedure
+
+; ---------------------------------------------------------------- input from the host
+
+Procedure CocoMonitorCommand(c.i)
+  Select c
+    Case 115                             ; s
+      CocoStatus(Micros())
+    Case 116                             ; t
+      CocoTextDump()
+    Case 102                             ; f
+      CocoFullSpeed = CocoFullSpeed ! 1
+      Say("COCO full_speed=") : Num(CocoFullSpeed) : Eol()
+    Case 118                             ; v
+      CocoReport = CocoReport ! 1
+    Case 99                              ; c
+      CocoCapture()
+    Case 112                             ; p
+      CocoCpuReport()
+    Case 114                             ; r
+      CocoReset() : CocoCpuReset() : CocoBoardSetup()
+      Say("COCO reset") : Eol()
+  EndSelect
+EndProcedure
+
+Global CocoHostByte.i
+Procedure CocoHostInput()
+  While UsbSerialAvailable()
+    CocoHostByte = UsbSerialRead()
+    If CocoHostByte < 0 : Break : EndIf
+    If CocoMonitor
+      CocoMonitor = 0 : CocoMonitorCommand(CocoHostByte)
+    ElseIf CocoHostByte = $1D
+      CocoMonitor = 1
+    Else
+      KeyPut(CocoHostByte)
+    EndIf
+  Wend
+EndProcedure
+
+; ---------------------------------------------------------------- the loop
+
+; Run the machine for ever. A frame of the real machine is 262 x 1824 GIME clocks = 16688.2 us.
+; THE PATH DOWN TO CpuRun keeps no locals: the core holds CpuB and CpuFZ in r4 and r5 for the whole
+; program, so a procedure that calls on to it must not keep its own values there (PM1126). Its state
+; is in Globals instead (as the 6502 precedent's driver loop).
+Global RunDue.i, RunDueFrac.i, RunNow.i, RunStart.i, RunNeed.i, RunReport.i, RunUsed.i
+Procedure CocoRun()
+  CocoReset() : CocoCpuReset() : CocoBoardSetup()
+  SoundStart()
+  RunDue = Micros() : RunDueFrac = 0
+  RunReport = Micros() : CocoStatAt = RunReport
+  Repeat
+    RunStart = Micros()
+    ; one frame of scanlines
+    Repeat
+      While CocoLinePos < #GIME_LINE_CLOCKS
+        RunNeed = (#GIME_LINE_CLOCKS - CocoLinePos + CocoCycleClocks - 1) / CocoCycleClocks
+        CocoFolded = 0
+        RunUsed = CocoCpuRun(RunNeed)
+        CocoLinePos = CocoLinePos + (RunUsed - CocoFolded) * CocoCycleClocks
+        CocoFolded = 0
+      Wend
+      CocoLinePos = CocoLinePos - #GIME_LINE_CLOCKS
+      CocoEndLine()
+      SoundCatchUp(GimeNow)
+      If (CocoLine & 15) = 0
+        CocoBoardService()
+      EndIf
+    Until CocoLine = 0
+    CocoRunUs = CocoRunUs + Micros() - RunStart
+    KeyFrame()
+    CocoFrameHook()
+    CocoHostInput()
+    ; pacing
+    RunDue = RunDue + 16688 : RunDueFrac = RunDueFrac + 2
+    If RunDueFrac >= 10 : RunDueFrac = RunDueFrac - 10 : RunDue = RunDue + 1 : EndIf
+    RunNow = Micros()
+    If CocoFullSpeed
+      RunDue = RunNow
+    ElseIf RunNow - RunDue > 100000
+      CocoLate = CocoLate + 1 : RunDue = RunNow
+    Else
+      While Micros() - RunDue < 0
+        CocoBoardService()
+      Wend
+    EndIf
+    If CocoReport And RunNow - RunReport >= 5000000
+      CocoStatus(RunNow) : RunReport = RunNow
+    EndIf
+  ForEver
+EndProcedure

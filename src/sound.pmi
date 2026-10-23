@@ -1,0 +1,42 @@
+; CoCo 3 sound: the 6-bit DAC (PIA1 PA2-PA7, through the sound mux when SNDEN is on) and the single-bit
+; output (PIA1 PB1), sampled at 48 kHz against machine time, into a ring the Bluetooth speaker reads.
+;
+; Each change of the output level first fills the ring up to the moment of the change with the old
+; level, so the waveform BASIC's SOUND and PLAY make with timing loops keeps its timing exactly.
+; A sample is due every 28636363 / 48000 = 596.59 GIME clocks: 596, plus one when the remainder
+; (28363 per sample, out of 48000) carries.
+
+#SOUND_RING = 2048                       ; samples, a power of two (43 ms)
+
+Global Dim SoundRing.w(#SOUND_RING)
+Global SoundSamples.i                    ; samples ever written (the speaker's reader follows this)
+Global SoundNext.i, SoundFrac.i, SoundValue.i, SoundOn.i
+
+Procedure SoundStart()
+  SoundNext = CocoTime() : SoundFrac = 0 : SoundOn = 1
+EndProcedure
+
+Procedure SoundCatchUp(now.i)
+  Protected v.i
+  If SoundOn = 0 : ProcedureReturn : EndIf
+  v = SoundValue
+  While now - SoundNext >= 0
+    SoundRing(SoundSamples & (#SOUND_RING - 1)) = v
+    SoundSamples = SoundSamples + 1
+    SoundNext = SoundNext + 596
+    SoundFrac = SoundFrac + 28363
+    If SoundFrac >= 48000 : SoundFrac = SoundFrac - 48000 : SoundNext = SoundNext + 1 : EndIf
+  Wend
+EndProcedure
+
+; Called by the PIAs whenever a register the output depends on is written.
+Procedure CocoSoundChanged()
+  Protected level.i
+  SoundCatchUp(CocoTime())
+  level = CocoSoundLevel()
+  If CocoSoundOn = 0 And CocoBit = 0
+    SoundValue = 0
+  Else
+    SoundValue = (level - 32) * 640
+  EndIf
+EndProcedure

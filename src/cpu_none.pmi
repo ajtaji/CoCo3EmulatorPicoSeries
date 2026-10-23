@@ -1,0 +1,42 @@
+; No CPU: the machine's clock runs and nothing executes. For bringing up the video, keyboard and
+; sound paths on a board without a 6809. Provides what machine.pmi needs from a core (the page
+; tables, the interrupt lines, CpuCycles) and the glue's CocoCpu* names (see cpu6809_glue.pmi).
+
+Global Dim CpuRdMap.i(256)
+Global Dim CpuWrMap.i(256)
+Global CpuIrqLine.i, CpuFirqLine.i, CpuCycles.i
+
+Procedure CpuMapPages(first.i, count.i, host.i, writable.i)
+  Protected i.i
+  For i = 0 To count - 1
+    CpuRdMap((first + i) & 255) = host + i * 256
+    If writable : CpuWrMap((first + i) & 255) = host + i * 256 : Else : CpuWrMap((first + i) & 255) = 0 : EndIf
+  Next
+EndProcedure
+
+Procedure CpuMapIo(first.i, count.i)
+  Protected i.i
+  For i = 0 To count - 1
+    CpuRdMap((first + i) & 255) = 0 : CpuWrMap((first + i) & 255) = 0
+  Next
+EndProcedure
+
+Procedure CocoCpuReset()
+EndProcedure
+
+; Run at least `cycles` E cycles; returns the cycles used. Here they just pass.
+Procedure.i CocoCpuRun(cycles.i)
+  CpuCycles = CpuCycles + cycles
+  ProcedureReturn cycles
+EndProcedure
+
+Procedure.i CocoCpuElapsed()
+  ProcedureReturn 0
+EndProcedure
+
+Procedure.i CocoCpuPc()
+  ProcedureReturn -1
+EndProcedure
+
+Procedure CocoCpuReport()
+EndProcedure

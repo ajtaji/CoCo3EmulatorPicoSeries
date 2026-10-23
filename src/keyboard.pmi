@@ -1,0 +1,113 @@
+; The CoCo 3 keyboard, typed from the PC over USB serial.
+;
+; Each byte from the host is one key: it is pressed (with SHIFT where the character needs it) for
+; #KEY_HOLD_FRAMES frames, released for #KEY_GAP_FRAMES, then the next byte is taken. BASIC scans
+; the matrix in software and debounces, so a key must stay down for a few of its scans.
+;
+; Bytes: printable ASCII as on the CoCo keyboard (letters of either case are the unshifted key);
+; 13 or 10 ENTER; 8 or 127 the left arrow; 27 or 3 BREAK; 12 CLEAR; 9 the right arrow.
+; tools/console.py sends the keys a PC keyboard has no ASCII for: $80 up, $81 down, $82 left,
+; $83 right, $84 F1, $85 F2, $86 ALT (with the next key), $87 CTRL (with the next key).
+; $1D is the monitor escape: the byte after it is a command to the firmware, not a key.
+;
+; The matrix (MAME coco3.cpp): row = PIA0 PA bit, column = PIA0 PB bit.
+;   row 0: @ A B C D E F G      row 4: 0 1 2 3 4 5 6 7
+;   row 1: H I J K L M N O      row 5: 8 9 : ; , - . /
+;   row 2: P Q R S T U V W      row 6: ENTER CLEAR BREAK ALT CTRL F1 F2 SHIFT
+;   row 3: X Y Z UP DOWN LEFT RIGHT SPACE
+
+#KEY_HOLD_FRAMES = 3
+#KEY_GAP_FRAMES = 2
+#KEY_QUEUE = 256
+
+Global Dim KeyQueue.a(#KEY_QUEUE)
+Global KeyHead.i, KeyTail.i, KeyState.i, KeyUntil.i, KeyHeld.i, KeyShift.i, KeyMods.i
+Global KeyDropped.i, KeyTyped.i
+
+; Queue a byte from the host. Returns 0 when the queue is full (the byte is dropped and counted).
+Procedure.i KeyPut(c.i)
+  If ((KeyHead + 1) % #KEY_QUEUE) = KeyTail
+    KeyDropped = KeyDropped + 1
+    ProcedureReturn 0
+  EndIf
+  KeyQueue(KeyHead) = c
+  KeyHead = (KeyHead + 1) % #KEY_QUEUE
+  ProcedureReturn 1
+EndProcedure
+
+Procedure.i KeyPending()
+  ProcedureReturn (KeyHead - KeyTail + #KEY_QUEUE) % #KEY_QUEUE
+EndProcedure
+
+; The matrix position of a byte: (row << 4) | column, plus $100 when SHIFT is needed; -1 for a byte
+; that is no key. The table (tools/make_keytable.py's output) covers bytes 0-135.
+Procedure.i KeyCode(c.i)
+  Protected v.i
+  If c < 0 Or c > 135 : ProcedureReturn -1 : EndIf
+  v = PeekU(?KeyTable + c * 2)
+  If v = $FFFF : ProcedureReturn -1 : EndIf
+  ProcedureReturn v
+EndProcedure
+
+DataSection
+  KeyTable:
+  Data.u $FFFF, $FFFF, $FFFF, $0062, $FFFF, $FFFF, $FFFF, $FFFF
+  Data.u $0035, $0036, $0060, $FFFF, $0061, $0060, $FFFF, $FFFF
+  Data.u $FFFF, $FFFF, $FFFF, $FFFF, $FFFF, $FFFF, $FFFF, $FFFF
+  Data.u $FFFF, $FFFF, $FFFF, $0062, $FFFF, $FFFF, $FFFF, $FFFF
+  Data.u $0037, $0141, $0142, $0143, $0144, $0145, $0146, $0147
+  Data.u $0150, $0151, $0152, $0153, $0054, $0055, $0056, $0057
+  Data.u $0040, $0041, $0042, $0043, $0044, $0045, $0046, $0047
+  Data.u $0050, $0051, $0052, $0053, $0154, $0155, $0156, $0157
+  Data.u $0000, $0001, $0002, $0003, $0004, $0005, $0006, $0007
+  Data.u $0010, $0011, $0012, $0013, $0014, $0015, $0016, $0017
+  Data.u $0020, $0021, $0022, $0023, $0024, $0025, $0026, $0027
+  Data.u $0030, $0031, $0032, $FFFF, $FFFF, $FFFF, $FFFF, $FFFF
+  Data.u $FFFF, $0001, $0002, $0003, $0004, $0005, $0006, $0007
+  Data.u $0010, $0011, $0012, $0013, $0014, $0015, $0016, $0017
+  Data.u $0020, $0021, $0022, $0023, $0024, $0025, $0026, $0027
+  Data.u $0030, $0031, $0032, $FFFF, $FFFF, $FFFF, $FFFF, $0035
+  Data.u $0033, $0034, $0035, $0036, $0065, $0066, $FFFF, $FFFF
+EndDataSection
+
+Procedure KeyRelease()
+  Protected i.i
+  For i = 0 To 7 : CocoKeys(i) = 0 : Next
+EndProcedure
+
+Procedure KeyPress(code.i)
+  CocoKeys(code & 7) = CocoKeys(code & 7) | (1 << ((code >> 4) & 7))
+  If code & $100 : CocoKeys(7) = CocoKeys(7) | $40 : EndIf
+  If KeyMods & 1 : CocoKeys(3) = CocoKeys(3) | $40 : EndIf   ; ALT
+  If KeyMods & 2 : CocoKeys(4) = CocoKeys(4) | $40 : EndIf   ; CTRL
+  ; a key going down is the GIME's keyboard interrupt source (EI1)
+  GimeEdge(#GIRQ_EI1)
+EndProcedure
+
+; Once a frame (from the machine loop).
+Procedure KeyFrame()
+  Protected c.i, code.i
+  If KeyState = 1
+    If CocoFrames - KeyUntil >= 0
+      KeyRelease() : KeyMods = 0
+      KeyState = 2 : KeyUntil = CocoFrames + #KEY_GAP_FRAMES
+    EndIf
+    ProcedureReturn
+  EndIf
+  If KeyState = 2
+    If CocoFrames - KeyUntil < 0 : ProcedureReturn : EndIf
+    KeyState = 0
+  EndIf
+  While KeyTail <> KeyHead
+    c = KeyQueue(KeyTail)
+    KeyTail = (KeyTail + 1) % #KEY_QUEUE
+    If c = $86 : KeyMods = KeyMods | 1 : Continue : EndIf
+    If c = $87 : KeyMods = KeyMods | 2 : Continue : EndIf
+    code = KeyCode(c)
+    If code >= 0
+      KeyPress(code) : KeyTyped = KeyTyped + 1
+      KeyState = 1 : KeyUntil = CocoFrames + #KEY_HOLD_FRAMES
+      Break
+    EndIf
+  Wend
+EndProcedure

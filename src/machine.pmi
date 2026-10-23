@@ -1,0 +1,536 @@
+; Tandy Color Computer 3: memory, MMU, GIME registers, SAM, the two PIAs, the GIME timer and the
+; interrupt lines. Chip-independent: no Pico register is touched here.
+;
+; THE CPU CORE (the 6809 of 6809EmulatorPicoSeries, or cpu_none.pmi) reaches memory through its own
+; 256-byte page tables, which CocoMapBank fills with CpuMapPages; page $FF is I/O (CpuMapIo) and comes
+; here through CpuBusRead / CpuBusWrite. CocoIrq / CocoFirq are copied to CpuIrqLine / CpuFirqLine
+; whenever they change; the core samples them after every I/O access. A cartridge NMI is not wired.
+; The glue (cpu6809_glue.pmi) supplies CocoCpuRun(cycles) and CocoCpuElapsed(): the cycles the window
+; in progress has used so far (0 between windows).
+;
+; Sources: MAME src/mame/trs/gime.cpp, coco3.cpp, coco.cpp (BSD-3-Clause; read, not copied), the
+; CoCo 3 service manual's register descriptions. Downloaded copies: C:\PMFBuild\coco3-reference.
+
+#COCO_RAM_PAGES = 16                     ; 8 KB pages: 128 KB. The MMU's 6-bit page number is taken modulo this.
+#COCO_RAM_BYTES = #COCO_RAM_PAGES * 8192
+
+; The GIME's master clock is 28.636363 MHz. Time on this machine is counted in those clocks.
+#GIME_LINE_CLOCKS = 1824                 ; one scanline, 63.695 us
+#GIME_FRAME_LINES = 262
+#GIME_SLOW_CLOCKS = 32                   ; one E cycle at 0.894886 MHz
+#GIME_FAST_CLOCKS = 16                   ; one E cycle at 1.789773 MHz
+#GIME_TIMER_FAST = 8                     ; the 279 ns timer input
+
+; Interrupt source bits, as in $FF92 / $FF93.
+#GIRQ_TMR = $20
+#GIRQ_HBORD = $10
+#GIRQ_VBORD = $08
+#GIRQ_EI2 = $04
+#GIRQ_EI1 = $02
+#GIRQ_EI0 = $01
+
+; The RAM is sixteen 8 KB arrays, one per page, not one 128 KB array: on the Pico W no run of SRAM
+; that long is left once the 6809 core's code (about 85 KB, in SRAM for speed), the USB library's fixed
+; buffers at $20030000 and the stacks are placed, and pages can fill the holes between them.
+; CocoPageBase(page) is where each page lives.
+Global Dim CocoRam0.a(8192)
+Global Dim CocoRam1.a(8192)
+Global Dim CocoRam2.a(8192)
+Global Dim CocoRam3.a(8192)
+Global Dim CocoRam4.a(8192)
+Global Dim CocoRam5.a(8192)
+Global Dim CocoRam6.a(8192)
+Global Dim CocoRam7.a(8192)
+Global Dim CocoRam8.a(8192)
+Global Dim CocoRam9.a(8192)
+Global Dim CocoRam10.a(8192)
+Global Dim CocoRam11.a(8192)
+Global Dim CocoRam12.a(8192)
+Global Dim CocoRam13.a(8192)
+Global Dim CocoRam14.a(8192)
+Global Dim CocoRam15.a(8192)
+Global Dim CocoPageBase.i(#COCO_RAM_PAGES)
+Global CocoFeRead.i                      ; $FE00-$FEFF as mapped now (for the monitor)
+Global CocoRom.i                         ; the 32 KB internal ROM (address in flash or SRAM), 0 = none
+Global CocoCart.i, CocoCartBytes.i       ; the cartridge ROM ($C000-), 0 = no cartridge
+Global Dim CocoBlank.a(256)              ; reads of an empty cartridge slot ($FF), mapped page by page
+Global Dim Gime.a(16)                    ; $FF90-$FF9F as last written
+Global Dim GimeMmu.a(16)                 ; $FFA0-$FFAF
+Global Dim GimePal.a(16)                 ; $FFB0-$FFBF, 6 bits each
+Global GimePalSerial.i                   ; changes whenever a palette register changes (the renderer watches it)
+Global SamBits.i                         ; the SAM's 16 set/clear flip-flops, bit n = $FFC0 + 2n
+Global GimeIrqPending.i, GimeFirqPending.i
+Global CocoIrq.i, CocoFirq.i
+Global CocoFast.i                        ; 1 = 1.79 MHz
+Global CocoCycleClocks.i = #GIME_SLOW_CLOCKS
+Global GimeBlink.i                       ; toggled by the timer: the attribute blink phase
+
+; Time. GimeNow is the time of the start of the current scanline (see CocoTime).
+Global GimeNow.i, CocoLine.i, CocoFrames.i
+Global GimeTimerDue.i, GimeTimerOn.i, GimeTimerReload.i
+
+; The PIAs (MC6821). Index 0 = PIA0 at $FF00, 1 = PIA1 at $FF20.
+Global Dim PiaOutA.a(2)
+Global Dim PiaDdrA.a(2)
+Global Dim PiaCrA.a(2)
+Global Dim PiaOutB.a(2)
+Global Dim PiaDdrB.a(2)
+Global Dim PiaCrB.a(2)
+
+; Keyboard: CocoKeys(column) holds the rows (PIA0 PA0-PA6) pressed in that column (PIA0 PB0-PB7).
+Global Dim CocoKeys.a(8)
+Global CocoButtons.i                     ; joystick fire buttons: bit 0 right 1, bit 1 left 1 (pull PA0/PA1 low)
+Global Dim CocoJoy.a(4)                  ; 0-63: right X, right Y, left X, left Y
+Global CocoDac.i                         ; the 6-bit DAC, PIA1 PA2-PA7
+Global CocoSoundOn.i                     ; PIA1 CB2 (SNDEN)
+Global CocoBit.i                         ; PIA1 PB1, the single-bit sound
+
+Declare CocoMapAll()
+Declare CocoSoundChanged()
+
+; ---------------------------------------------------------------- memory map
+
+; The 8 KB of memory behind block b (an MMU page number, or 56 + bank with the MMU off) for bank
+; slot `bank` (0-7). Returns the base address; *ro is set to 1 for ROM.
+Global CocoMapRo.i
+Procedure.i CocoBlockBase(bank.i, block.i, forceRam.i)
+  Protected romMode.i
+  CocoMapRo = 0
+  If (block & $3F) >= $3C And (SamBits & $8000) = 0 And forceRam = 0
+    CocoMapRo = 1
+    romMode = Gime(0) & 3
+    If romMode = 3 Or (romMode < 2 And (block & $3F) >= $3E)
+      ; the cartridge, pinned to the slot (an 8 KB cartridge appears at $C000 and at $E000)
+      If CocoCart = 0
+        ProcedureReturn 0
+      EndIf
+      ProcedureReturn CocoCart + ((((bank & 3) ! 2) * 8192) % CocoCartBytes)
+    EndIf
+    If CocoRom = 0
+      ProcedureReturn 0
+    EndIf
+    ProcedureReturn CocoRom + (bank & 3) * 8192
+  EndIf
+  ProcedureReturn CocoPageBase(block % #COCO_RAM_PAGES)
+EndProcedure
+
+; Map `count` 256-byte CPU pages from `first` onto host memory `base` (0 = an empty slot: every page
+; onto the one 256-byte page of $FF).
+Procedure CocoMapRun(first.i, count.i, base.i, writable.i)
+  Protected i.i
+  If base
+    CpuMapPages(first, count, base, writable)
+  Else
+    For i = 0 To count - 1 : CpuMapPages(first + i, 1, @CocoBlank(0), 0) : Next
+  EndIf
+EndProcedure
+
+Procedure CocoMapBank(bank.i)
+  Protected block.i, base.i, ro.i, fe.i, feRo.i
+  If Gime(0) & $40
+    block = GimeMmu(bank + (Gime(1) & 1) * 8)
+  Else
+    block = bank + 56
+  EndIf
+  base = CocoBlockBase(bank, block, 0)
+  ro = CocoMapRo
+  If bank < 7
+    CocoMapRun(bank * 32, 32, base, 1 - ro)
+    ProcedureReturn
+  EndIf
+  CocoMapRun($E0, 30, base, 1 - ro)
+  ; $FE00-$FEFF: with MC3 set it is always the top of block $3F's RAM ("constant page")
+  fe = base : feRo = ro
+  If Gime(0) & $08
+    fe = CocoBlockBase(7, $3F, 1) : feRo = 0
+  EndIf
+  If fe : CocoFeRead = fe + $1E00 : Else : CocoFeRead = @CocoBlank(0) : EndIf
+  If fe : CocoMapRun($FE, 1, fe + $1E00, 1 - feRo) : Else : CocoMapRun($FE, 1, 0, 0) : EndIf
+  CpuMapIo($FF, 1)
+EndProcedure
+
+Procedure CocoMapAll()
+  Protected i.i
+  For i = 0 To 7
+    CocoMapBank(i)
+  Next
+EndProcedure
+
+; Physical address (the GIME's 512 KB space, taken modulo the RAM fitted) to an SRAM address.
+Procedure.i CocoPhys(addr.i)
+  ProcedureReturn CocoPageBase((addr >> 13) & (#COCO_RAM_PAGES - 1)) + (addr & $1FFF)
+EndProcedure
+
+Procedure CocoRamInit()
+  CocoPageBase(0) = @CocoRam0(0)
+  CocoPageBase(1) = @CocoRam1(0)
+  CocoPageBase(2) = @CocoRam2(0)
+  CocoPageBase(3) = @CocoRam3(0)
+  CocoPageBase(4) = @CocoRam4(0)
+  CocoPageBase(5) = @CocoRam5(0)
+  CocoPageBase(6) = @CocoRam6(0)
+  CocoPageBase(7) = @CocoRam7(0)
+  CocoPageBase(8) = @CocoRam8(0)
+  CocoPageBase(9) = @CocoRam9(0)
+  CocoPageBase(10) = @CocoRam10(0)
+  CocoPageBase(11) = @CocoRam11(0)
+  CocoPageBase(12) = @CocoRam12(0)
+  CocoPageBase(13) = @CocoRam13(0)
+  CocoPageBase(14) = @CocoRam14(0)
+  CocoPageBase(15) = @CocoRam15(0)
+EndProcedure
+
+; ---------------------------------------------------------------- interrupts
+
+Procedure CocoUpdateLines()
+  Protected irq.i, firq.i
+  ; PIA0 drives IRQ, PIA1 drives FIRQ: CRx bit 7 with bit 0, bit 6 with bit 3 when C2 is an input.
+  irq = Bool((PiaCrA(0) & $81) = $81 Or (PiaCrB(0) & $81) = $81)
+  irq = irq | Bool((PiaCrA(0) & $68) = $48 Or (PiaCrB(0) & $68) = $48)
+  firq = Bool((PiaCrA(1) & $81) = $81 Or (PiaCrB(1) & $81) = $81)
+  firq = firq | Bool((PiaCrA(1) & $68) = $48 Or (PiaCrB(1) & $68) = $48)
+  If Gime(0) & $20
+    If GimeIrqPending : irq = 1 : EndIf
+  EndIf
+  If Gime(0) & $10
+    If GimeFirqPending : firq = 1 : EndIf
+  EndIf
+  CocoIrq = irq : CocoFirq = firq
+  CpuIrqLine = irq : CpuFirqLine = firq
+EndProcedure
+
+; A rising edge on a GIME interrupt source.
+Procedure GimeEdge(source.i)
+  If Gime(2) & source : GimeIrqPending = GimeIrqPending | source : EndIf
+  If Gime(3) & source : GimeFirqPending = GimeFirqPending | source : EndIf
+  CocoUpdateLines()
+EndProcedure
+
+; An active transition on a PIA's C1 input (CA1 when b = 0, CB1 when b = 1). falling = 1 for a
+; high-to-low edge. CRx bit 1 chooses the active edge: 0 falling, 1 rising.
+Procedure PiaC1(p.i, b.i, falling.i)
+  If b
+    If Bool((PiaCrB(p) & 2) = 0) = falling : PiaCrB(p) = PiaCrB(p) | $80 : EndIf
+  Else
+    If Bool((PiaCrA(p) & 2) = 0) = falling : PiaCrA(p) = PiaCrA(p) | $80 : EndIf
+  EndIf
+EndProcedure
+
+; ---------------------------------------------------------------- the GIME timer
+
+Procedure.i GimeTimerUnit()
+  If Gime(1) & $20
+    ProcedureReturn #GIME_TIMER_FAST
+  EndIf
+  ProcedureReturn #GIME_LINE_CLOCKS
+EndProcedure
+
+; Time now, in GIME clocks: the start of the line, the clocks of it already accounted (CocoLinePos),
+; and the cycles the CPU window in progress has used beyond CocoFolded (cycles of this window already
+; added to CocoLinePos, at the rate they ran at, when the speed changed part way through it).
+Global CocoLinePos.i, CocoFolded.i
+Procedure.i CocoTime()
+  ProcedureReturn GimeNow + CocoLinePos + (CocoCpuElapsed() - CocoFolded) * CocoCycleClocks
+EndProcedure
+
+; Reload from $FF94/$FF95. The 1986 GIME counts the value plus two (MAME, Gault's FAQ).
+Procedure GimeTimerReset()
+  Protected value.i
+  value = ((Gime(4) & $0F) << 8) | Gime(5)
+  If value > 0
+    GimeTimerReload = (value + 2) * GimeTimerUnit()
+    GimeTimerDue = CocoTime() + GimeTimerReload
+    GimeTimerOn = 1
+  Else
+    GimeTimerOn = 0
+  EndIf
+EndProcedure
+
+; Called at every line boundary (and may be called more often). Expiries in the 279 ns mode can be
+; many per line; each one is an interrupt edge, but the CPU sees at most one per line here, which
+; is what a program polling or taking the interrupt can observe anyway.
+Procedure GimeTimerRun(now.i)
+  If GimeTimerOn = 0 : ProcedureReturn : EndIf
+  If now - GimeTimerDue >= 0
+    While now - GimeTimerDue >= 0
+      GimeTimerDue = GimeTimerDue + GimeTimerReload
+      GimeBlink = GimeBlink ! 1
+    Wend
+    GimeEdge(#GIRQ_TMR)
+  EndIf
+EndProcedure
+
+; ---------------------------------------------------------------- PIAs
+
+; Port A inputs of PIA0: the keyboard rows and the joystick comparator.
+Procedure.i Pia0InputA()
+  Protected cols.i, rows.i, c.i, dac.i, mux.i
+  cols = PiaOutB(0) | (~PiaDdrB(0) & $FF)  ; an input line floats high
+  rows = 0
+  For c = 0 To 7
+    If (cols & (1 << c)) = 0
+      rows = rows | CocoKeys(c)
+    EndIf
+  Next
+  rows = (~(rows | CocoButtons)) & $7F
+  ; comparator: the selected joystick axis against the DAC (MAME: joystick value >= dac)
+  mux = Bool(PiaCrA(0) & $08) | (Bool(PiaCrB(0) & $08) << 1)
+  If CocoJoy(mux) >= CocoDac
+    rows = rows | $80
+  EndIf
+  ProcedureReturn rows
+EndProcedure
+
+Procedure.i PiaRead(p.i, reg.i)
+  Protected v.i, inp.i
+  If reg = 0
+    If PiaCrA(p) & 4
+      If p = 0
+        inp = Pia0InputA()
+      Else
+        inp = $FE                         ; cassette input low
+      EndIf
+      v = (PiaOutA(p) & PiaDdrA(p)) | (inp & ~PiaDdrA(p))
+      PiaCrA(p) = PiaCrA(p) & $3F
+      CocoUpdateLines()
+      ProcedureReturn v & $FF
+    EndIf
+    ProcedureReturn PiaDdrA(p)
+  ElseIf reg = 1
+    ProcedureReturn PiaCrA(p)
+  ElseIf reg = 2
+    If PiaCrB(p) & 4
+      If p = 0
+        inp = $FF
+      Else
+        ; PB2 RAMSZ: 64K-style RAM when PIA0 PB6 is high (MAME pia1_pb_r)
+        inp = $FB
+        If PiaOutB(0) & $40 : inp = inp | 4 : EndIf
+      EndIf
+      v = (PiaOutB(p) & PiaDdrB(p)) | (inp & ~PiaDdrB(p))
+      PiaCrB(p) = PiaCrB(p) & $3F
+      CocoUpdateLines()
+      ProcedureReturn v & $FF
+    EndIf
+    ProcedureReturn PiaDdrB(p)
+  EndIf
+  ProcedureReturn PiaCrB(p)
+EndProcedure
+
+Procedure PiaWrite(p.i, reg.i, v.i)
+  If reg = 0
+    If PiaCrA(p) & 4 : PiaOutA(p) = v : Else : PiaDdrA(p) = v : EndIf
+    If p = 1 : CocoDac = (PiaOutA(1) >> 2) & 63 : CocoSoundChanged() : EndIf
+  ElseIf reg = 1
+    PiaCrA(p) = (PiaCrA(p) & $C0) | (v & $3F)
+    If p = 0 : CocoSoundChanged() : EndIf
+  ElseIf reg = 2
+    If PiaCrB(p) & 4 : PiaOutB(p) = v : Else : PiaDdrB(p) = v : EndIf
+    If p = 1 : CocoBit = (PiaOutB(1) >> 1) & 1 : CocoSoundChanged() : EndIf
+  Else
+    PiaCrB(p) = (PiaCrB(p) & $C0) | (v & $3F)
+    If p = 1 : CocoSoundOn = Bool((v & $38) = $38) : CocoSoundChanged() : EndIf
+    If p = 0 : CocoSoundChanged() : EndIf
+  EndIf
+  CocoUpdateLines()
+EndProcedure
+
+; The level the sound output is at: the DAC when SNDEN is on and the mux selects it (SEL1 = SEL2 = 0),
+; plus the single-bit sound. 0-63.
+Procedure.i CocoSoundLevel()
+  Protected level.i
+  level = 0
+  If CocoSoundOn And (PiaCrA(0) & $08) = 0 And (PiaCrB(0) & $08) = 0
+    level = CocoDac
+  EndIf
+  If CocoBit
+    level = level + 16
+    If level > 63 : level = 63 : EndIf
+  EndIf
+  ProcedureReturn level
+EndProcedure
+
+; ---------------------------------------------------------------- GIME and SAM registers
+
+Procedure GimeWrite(reg.i, v.i)
+  Protected old.i
+  old = Gime(reg) : Gime(reg) = v
+  Select reg
+    Case 0
+      If (old ! v) & $4B : CocoMapAll() : EndIf
+      CocoUpdateLines()
+    Case 1
+      If (old ! v) & 1 : CocoMapAll() : EndIf
+      If (old ! v) & $20 : GimeTimerReset() : EndIf
+    Case 2
+      GimeIrqPending = GimeIrqPending & v
+      CocoUpdateLines()
+    Case 3
+      GimeFirqPending = GimeFirqPending & v
+      CocoUpdateLines()
+    Case 4
+      GimeTimerReset()
+  EndSelect
+EndProcedure
+
+Procedure SamWrite(offset.i)
+  Protected bit.i, old.i, done.i
+  old = SamBits
+  bit = 1 << (offset >> 1)
+  If offset & 1
+    SamBits = SamBits | bit
+  Else
+    SamBits = SamBits & ~bit
+  EndIf
+  If (old ! SamBits) & $8000 : CocoMapAll() : EndIf
+  ; R1 ($FFD8/$FFD9) or R0 ($FFD6/$FFD7) set: 1.79 MHz
+  If (old ! SamBits) & $1800
+    ; the cycles already run in this window stay at the old rate
+    done = CocoCpuElapsed() - CocoFolded
+    CocoLinePos = CocoLinePos + done * CocoCycleClocks
+    CocoFolded = CocoFolded + done
+    CocoFast = Bool(SamBits & $1800)
+    If CocoFast : CocoCycleClocks = #GIME_FAST_CLOCKS : Else : CocoCycleClocks = #GIME_SLOW_CLOCKS : EndIf
+  EndIf
+EndProcedure
+
+; ---------------------------------------------------------------- the I/O page
+
+Declare.i CocoDiskRead(reg.i)
+Declare CocoDiskWrite(reg.i, v.i)
+
+Procedure.i CocoBusRead(a.i)
+  Protected v.i
+  If a < $FF00
+    ProcedureReturn PeekA(CocoFeRead + (a & $FF))
+  EndIf
+  If a < $FF20
+    ProcedureReturn PiaRead(0, a & 3)
+  ElseIf a < $FF40
+    ProcedureReturn PiaRead(1, a & 3)
+  ElseIf a < $FF60
+    ProcedureReturn CocoDiskRead(a & $1F)
+  ElseIf a < $FF90
+    ProcedureReturn $FF
+  ElseIf a < $FFA0
+    If a = $FF92
+      v = GimeIrqPending : GimeIrqPending = 0 : CocoUpdateLines() : ProcedureReturn v
+    ElseIf a = $FF93
+      v = GimeFirqPending : GimeFirqPending = 0 : CocoUpdateLines() : ProcedureReturn v
+    EndIf
+    ProcedureReturn $FF
+  ElseIf a < $FFB0
+    ProcedureReturn GimeMmu(a & 15) & $3F
+  ElseIf a < $FFC0
+    ProcedureReturn GimePal(a & 15)
+  ElseIf a < $FFE0
+    ProcedureReturn $FF
+  EndIf
+  ; $FFE0-$FFFF: the vectors, always from the internal ROM
+  If CocoRom = 0 : ProcedureReturn $FF : EndIf
+  ProcedureReturn PeekA(CocoRom + $7FE0 + (a & $1F))
+EndProcedure
+
+Procedure CocoBusWrite(a.i, v.i)
+  v = v & $FF
+  If a < $FF00
+    ProcedureReturn                      ; $FE00-$FEFF is mapped memory; it never comes here
+  EndIf
+  If a < $FF20
+    PiaWrite(0, a & 3, v)
+  ElseIf a < $FF40
+    PiaWrite(1, a & 3, v)
+  ElseIf a < $FF60
+    CocoDiskWrite(a & $1F, v)
+  ElseIf a < $FF90
+    ProcedureReturn
+  ElseIf a < $FFA0
+    GimeWrite(a & 15, v)
+  ElseIf a < $FFB0
+    If GimeMmu(a & 15) <> v
+      GimeMmu(a & 15) = v
+      CocoMapBank(a & 7)
+    EndIf
+  ElseIf a < $FFC0
+    If GimePal(a & 15) <> (v & $3F)
+      GimePal(a & 15) = v & $3F
+      GimePalSerial = GimePalSerial + 1
+    EndIf
+  ElseIf a < $FFE0
+    SamWrite(a - $FFC0)
+  EndIf
+EndProcedure
+
+; ---------------------------------------------------------------- reset and the scanline clock
+
+Procedure CocoReset()
+  Protected i.i
+  For i = 0 To 15
+    Gime(i) = 0 : GimeMmu(i) = 56 + (i & 7) : GimePal(i) = 0
+  Next
+  For i = 0 To 1
+    PiaOutA(i) = 0 : PiaDdrA(i) = 0 : PiaCrA(i) = 0
+    PiaOutB(i) = 0 : PiaDdrB(i) = 0 : PiaCrB(i) = 0
+  Next
+  For i = 0 To 255 : CocoBlank(i) = $FF : Next
+  CocoRamInit()
+  SamBits = 0 : CocoFast = 0 : CocoCycleClocks = #GIME_SLOW_CLOCKS
+  GimeIrqPending = 0 : GimeFirqPending = 0 : GimeTimerOn = 0 : GimeBlink = 0
+  CocoDac = 0 : CocoSoundOn = 0 : CocoBit = 0
+  For i = 0 To 3 : CocoJoy(i) = 32 : Next
+  CocoLine = 0 : CocoLinePos = 0 : CocoFolded = 0
+  GimePalSerial = GimePalSerial + 1
+  CocoMapAll()
+  CocoUpdateLines()
+EndProcedure
+
+; The line structure. Body 192 lines (25 top border): the field sync goes low as the body ends
+; and the bottom border starts (VBORD), and high again 26 border lines later (MAME gime.cpp TIMING).
+Procedure.i GimeBodyTop()
+  Select Gime(9) & $60
+    Case $20 : ProcedureReturn 23
+    Case $60 : ProcedureReturn 8
+  EndSelect
+  ProcedureReturn 25
+EndProcedure
+
+Procedure.i GimeBodyLines()
+  Select Gime(9) & $60
+    Case $20 : ProcedureReturn 200
+    Case $60 : ProcedureReturn 225
+  EndSelect
+  ProcedureReturn 192
+EndProcedure
+
+; End the current scanline: move time on by one line and raise what happens at its boundary. The
+; caller has already taken #GIME_LINE_CLOCKS off CocoLinePos (what is left is the last instruction's
+; overshoot into the new line).
+Procedure CocoEndLine()
+  Protected bottom.i
+  GimeNow = GimeNow + #GIME_LINE_CLOCKS
+  CocoLine = CocoLine + 1
+  If CocoLine >= #GIME_FRAME_LINES
+    CocoLine = 0 : CocoFrames = CocoFrames + 1
+  EndIf
+  ; HSYNC on PIA0 CA1, both edges every line; HBORD each line
+  PiaC1(0, 0, 1) : PiaC1(0, 0, 0)
+  If (Gime(2) | Gime(3)) & #GIRQ_HBORD : GimeEdge(#GIRQ_HBORD) : EndIf
+  bottom = GimeBodyTop() + GimeBodyLines()
+  If CocoLine = bottom
+    PiaC1(0, 1, 1)                       ; field sync falls
+    GimeEdge(#GIRQ_VBORD)
+  ElseIf CocoLine = bottom + 26
+    PiaC1(0, 1, 0)                       ; field sync rises
+  EndIf
+  GimeTimerRun(GimeNow)
+  CocoUpdateLines()
+EndProcedure
+
+; The core's I/O hooks: page $FF only.
+Procedure.i CpuBusRead(addr.i)
+  ProcedureReturn CocoBusRead(addr)
+EndProcedure
+
+Procedure CpuBusWrite(addr.i, value.i)
+  CocoBusWrite(addr, value)
+EndProcedure

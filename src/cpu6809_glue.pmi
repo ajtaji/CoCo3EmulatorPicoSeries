@@ -1,0 +1,52 @@
+; Glue between the machine and the 6809 core of 6809EmulatorPicoSeries (src/cpu6809.pico, included
+; by the wrapper with #CPU_TIMING = 1 so CpuRun's budget is E cycles). The core is used as it is.
+
+Global CocoInWindow.i, CocoCpuStopReported.i
+Declare Say(*text.i)
+Declare Num(v.i)
+Declare Eol()
+
+Procedure CocoCpuReset()
+  CpuReset()
+  CocoCpuStopReported = 0
+EndProcedure
+
+; Run at least `cycles` E cycles; returns the cycles used (whole instructions, so a few more).
+; A core stopped on an undocumented opcode does not run: the time passes and it is reported once.
+Global CocoCpuUsed.i
+Procedure.i CocoCpuRun(cycles.i)
+  If CpuStopped
+    If CocoCpuStopReported = 0
+      CocoCpuStopReported = 1
+      Say("COCO 6809 STOPPED: undocumented opcode $") : Num(CpuBadOpcode) : Say(" at PC ") : Num(CpuPC)
+      Say(" - the program on the CoCo did something the core does not run. The machine keeps its clock; reset with Ctrl+] r.") : Eol()
+    EndIf
+    CpuCycles = CpuCycles + cycles
+    ProcedureReturn cycles
+  EndIf
+  CocoInWindow = 1
+  CocoCpuUsed = CpuRun(cycles)
+  CocoInWindow = 0
+  If CocoCpuUsed <= 0 : CocoCpuUsed = cycles : EndIf
+  ProcedureReturn CocoCpuUsed
+EndProcedure
+
+; The cycles the window in progress has used so far (valid inside the core's I/O hooks, where the
+; core has cut the window: CpuLeft + CpuCut is what remains of CpuBudget).
+Procedure.i CocoCpuElapsed()
+  If CocoInWindow = 0 : ProcedureReturn 0 : EndIf
+  ProcedureReturn CpuBudget - CpuLeft - CpuCut
+EndProcedure
+
+Procedure.i CocoCpuPc()
+  ProcedureReturn CpuPC
+EndProcedure
+
+Procedure CocoCpuReport()
+  Say("CPU pc=") : Num(CpuPC) : Say(" a=") : Num(CpuA) : Say(" b=") : Num(CpuB)
+  Say(" x=") : Num(CpuX) : Say(" y=") : Num(CpuY) : Say(" u=") : Num(CpuU) : Say(" s=") : Num(CpuS)
+  Say(" dp=") : Num(CpuDPage >> 8) : Say(" cc=") : Num(CpuGetCC())
+  Say(" irq=") : Num(CpuIrqLine) : Say(" firq=") : Num(CpuFirqLine)
+  Say(" wait=") : Num(CpuWaiting) : Say(" sync=") : Num(CpuSyncing) : Say(" stopped=") : Num(CpuStopped)
+  Eol()
+EndProcedure
