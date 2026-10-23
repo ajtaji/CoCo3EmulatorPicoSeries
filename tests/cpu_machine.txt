@@ -1,0 +1,13 @@
+# rp2040/Diagnostics/cpu_machine.picow: the 6809 core running a program in the CoCo 3 machine.
+expect 15 TEST program loaded
+screen 5 PUREMETAL COCO 3 TEST
+# line 1: PIA0's rows with every column strobed and no key down
+screen 3 \r\nFF
+# a key down pulls row 0 low (A is column 1, row 0)
+type aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+screen 4 \r\nFE
+cmd p
+expect 3 CPU pc=
+wait 5
+cmd s
+expect 3 COCO frames=

@@ -1,0 +1,128 @@
+; Diagnostic: the 6809 core in the CoCo 3 machine, with no Tandy ROM. A small 6809 program (assembled
+; by hand below, at $2000) sets the GIME to CoCo-compatible 32 x 16 text, prints a banner, programs
+; PIA0 for the keyboard and the VSYNC interrupt, and then loops showing the keyboard rows ($FF00 with
+; every column strobed) in hex on line 1 and an IRQ-driven frame counter on line 2. The vectors come
+; from a 32-byte table standing in for the ROM's $FFE0-$FFFF. tests/cpu_machine.txt checks it all
+; through the monitor's screen dump.
+#CPU_TIMING = 1
+#CPU_ASM_TAIL = 1
+#VIDEO_RGB = 0
+EnableExplicit
+XIncludeFile "RP2040/Lib/clocks.pico"
+XIncludeFile "RP2040/Lib/timer.pico"
+XIncludeFile "RP2040/Lib/uart.pico"
+XIncludeFile "RP2040/Lib/usb_serial.pico"
+XIncludeFile "RP2040/Lib/safety.pico"
+XIncludeFile "RP2040/Lib/flashid.pico"
+XIncludeFile "RP2040/Lib/flash.pico"
+XIncludeFile "RP2040/Lib/spi.pico"
+XIncludeFile "RP2040/Lib/st7796.pico"
+XIncludeFile "../../../6809EmulatorPicoSeries/src/cpu6809.pico"
+XIncludeFile "../../src/cpu6809_glue.pmi"
+XIncludeFile "../../src/machine.pmi"
+XIncludeFile "../../src/video.pmi"
+XIncludeFile "../../src/keyboard.pmi"
+XIncludeFile "../../src/sound.pmi"
+XIncludeFile "../../src/disk.pmi"
+XIncludeFile "../../src/coco3.pmi"
+XIncludeFile "../board.pico"
+
+Global Dim TestVectors.a(32)
+
+; A test font when no ROM is in flash: each glyph's code in binary, framed.
+Procedure DiagFont()
+  Protected c.i, r.i
+  If VideoFontLoaded : ProcedureReturn : EndIf
+  For c = 0 To 127
+    CocoFont(c * 8) = $FF
+    For r = 1 To 6 : CocoFont(c * 8 + r) = $81 | ((c << 1) & $7E) : Next
+    CocoFont(c * 8 + 7) = $FF
+  Next
+EndProcedure
+
+Procedure CocoBoardSetup()
+  Protected i.i, a.i
+  DiagFont()
+  ; the program, at CPU $2000: with the MMU off that is block 57, physical $72000
+  a = $72000
+  For i = 0 To ?TestProgramEnd - ?TestProgram - 1
+    PokeA(CocoPhys(a + i), PeekA(?TestProgram + i))
+  Next
+  For i = 0 To 31 : TestVectors(i) = PeekA(?TestVectorData + i) : Next
+  CocoRom = @TestVectors(0) - $7FE0        ; only $FFE0-$FFFF is ever read from it
+  SamBits = SamBits | $8000                ; all RAM: no ROM page is mapped
+  CocoMapAll()
+  CocoCpuReset()
+  Say("TEST program loaded, reset vector $") : Num(CpuPC) : Eol()
+EndProcedure
+
+Procedure CocoFrameHook()
+EndProcedure
+
+DataSection
+  TestProgram:
+  Data.a $10, $CE, $7F, $00              ; 2000 LDS  #$7F00
+  Data.a $86, $CC                        ; 2004 LDA  #$CC     CoCo mode, MMU, MC3, MC2
+  Data.a $B7, $FF, $90                   ; 2006 STA  $FF90
+  Data.a $86, $E0                        ; 2009 LDA  #$E0     video in the top 64 KB
+  Data.a $B7, $FF, $9D                   ; 200B STA  $FF9D
+  Data.a $7F, $FF, $9E                   ; 200E CLR  $FF9E
+  Data.a $86, $0F                        ; 2011 LDA  #$0F     12 lines a text row
+  Data.a $B7, $FF, $9C                   ; 2013 STA  $FF9C
+  Data.a $B7, $FF, $C9                   ; 2016 STA  $FFC9    SAM F1: the screen at $0400
+  Data.a $86, $12                        ; 2019 LDA  #$12
+  Data.a $B7, $FF, $BD                   ; 201B STA  $FFBD    palette 13 green
+  Data.a $7F, $FF, $BC                   ; 201E CLR  $FFBC    palette 12 black
+  Data.a $8E, $20, $80                   ; 2021 LDX  #$2080   the banner
+  Data.a $10, $8E, $04, $00              ; 2024 LDY  #$0400
+  Data.a $E6, $80                        ; 2028 LDB  ,X+
+  Data.a $27, $04                        ; 202A BEQ  $2030
+  Data.a $E7, $A0                        ; 202C STB  ,Y+
+  Data.a $20, $F8                        ; 202E BRA  $2028
+  Data.a $86, $FF                        ; 2030 LDA  #$FF
+  Data.a $B7, $FF, $02                   ; 2032 STA  $FF02    PIA0 DDRB: columns are outputs
+  Data.a $7F, $FF, $00                   ; 2035 CLR  $FF00    PIA0 DDRA: rows are inputs
+  Data.a $86, $04                        ; 2038 LDA  #$04
+  Data.a $B7, $FF, $01                   ; 203A STA  $FF01    CRA: data register
+  Data.a $86, $05                        ; 203D LDA  #$05
+  Data.a $B7, $FF, $03                   ; 203F STA  $FF03    CRB: data register, VSYNC IRQ on
+  Data.a $7F, $FF, $02                   ; 2042 CLR  $FF02    every column low
+  Data.a $1C, $EF                        ; 2045 ANDCC #$EF    IRQ unmasked
+  Data.a $B6, $FF, $00                   ; 2047 LDA  $FF00    the rows
+  Data.a $8E, $04, $20                   ; 204A LDX  #$0420   line 1
+  Data.a $BD, $20, $60                   ; 204D JSR  $2060
+  Data.a $B6, $7F, $10                   ; 2050 LDA  $7F10    the frame counter
+  Data.a $8E, $04, $40                   ; 2053 LDX  #$0440   line 2
+  Data.a $BD, $20, $60                   ; 2056 JSR  $2060
+  Data.a $20, $EC                        ; 2059 BRA  $2047
+  Data.a $12, $12, $12, $12, $12         ; 205B NOP x5 (padding to $2060)
+  Data.a $1F, $89                        ; 2060 TFR  A,B      hex of A at X, X+1
+  Data.a $44, $44, $44, $44              ; 2062 LSRA x4
+  Data.a $8D, $0B                        ; 2066 BSR  $2073
+  Data.a $A7, $80                        ; 2068 STA  ,X+
+  Data.a $1F, $98                        ; 206A TFR  B,A
+  Data.a $84, $0F                        ; 206C ANDA #$0F
+  Data.a $8D, $03                        ; 206E BSR  $2073
+  Data.a $A7, $84                        ; 2070 STA  ,X
+  Data.a $39                             ; 2072 RTS
+  Data.a $8B, $30                        ; 2073 ADDA #$30     a digit
+  Data.a $81, $39                        ; 2075 CMPA #$39
+  Data.a $23, $02                        ; 2077 BLS  $207B
+  Data.a $8B, $07                        ; 2079 ADDA #7       A-F
+  Data.a $39                             ; 207B RTS
+  Data.a $12, $12, $12, $12              ; 207C NOP x4 (padding to $2080)
+  ; 2080: the banner in VDG codes ($41-$5A letters, $60 space, $70-$79 inverse digits), 0 ends it
+  Data.a $50, $55, $52, $45, $4D, $45, $54, $41, $4C, $60, $43, $4F, $43, $4F, $60, $73
+  Data.a $60, $54, $45, $53, $54, $00
+  Data.a $12, $12, $12, $12, $12, $12, $12, $12, $12, $12  ; 2096 NOP x10 (padding to $20A0)
+  ; 20A0: IRQ handler
+  Data.a $B6, $FF, $02                   ; 20A0 LDA  $FF02    clears PIA0's VSYNC flag
+  Data.a $7C, $7F, $10                   ; 20A3 INC  $7F10
+  Data.a $3B                             ; 20A6 RTI
+  TestProgramEnd:
+  TestVectorData:                        ; $FFE0-$FFFF: everything to the RTI-ending handler, reset to $2000
+  Data.a $20, $A0, $20, $A0, $20, $A0, $20, $A0, $20, $A0, $20, $A0, $20, $A0, $20, $A0
+  Data.a $20, $A0, $20, $A0, $20, $A0, $20, $A0, $20, $A0, $20, $A0, $20, $A0, $20, $00
+EndDataSection
+
+Main()
