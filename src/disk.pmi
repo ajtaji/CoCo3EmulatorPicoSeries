@@ -35,12 +35,13 @@ Global Dim WdBuf.a(256)                  ; the sector being written
 Global DiskWriteErrors.i, DiskReads.i, DiskWrites.i, DiskRegionBase.i, DiskRegionFlash.i
 
 ; Find the images in the disk region (base = its flash address, flash = its offset).
-Procedure DiskInit(base.i, flash.i)
+Procedure DiskInit(base.i, flash.i, slots.i)
   Protected i.i, slot.i
   DiskRegionBase = base : DiskRegionFlash = flash
   For i = 0 To #DISK_SLOTS - 1
     slot = base + i * #DISK_SLOT_BYTES
     DiskBase(i) = 0 : DiskHead(i) = 0
+    If i >= slots : Continue : EndIf      ; this board's region holds fewer slots
     If PeekL(slot) = $4B534443 And PeekL(slot + 4) = 2   ; "CDSK" version 2
       DiskTracks(i) = PeekL(slot + 12) : DiskSides(i) = PeekL(slot + 16) : DiskSpt(i) = PeekL(slot + 20)
       If DiskTracks(i) > 0 And DiskSides(i) >= 1 And DiskSides(i) <= 2 And DiskSpt(i) = 18 And $100 + PeekL(slot + 24) + DiskTracks(i) * DiskSides(i) * 18 * 256 <= #DISK_SLOT_BYTES

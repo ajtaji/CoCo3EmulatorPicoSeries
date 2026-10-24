@@ -5,6 +5,19 @@
 #CPU_ASM_TAIL = 1
 #VIDEO_RGB = 0
 #COCO_AUDIO = 0                          ; the public firmware names no speaker: no sound
+#COCO_BOARD_NAME$ = "Pico 2 W"
+; The ROM region: $3E0000-$3EFFFF of the 4 MB flash. Not the Pico W's $140000: on a Pico 2 W the NES
+; ROM store's games run from $50000 to $1FEFFF, the radio firmware sits at $200000 and PDP-11 packs
+; from $240000 (an RK0 pack runs to $3FFFFF: a board keeping one cannot also keep the CoCo 3's ROM and
+; disks - agree a split first); the Bluetooth link key is the last sector, $3FF000. Build the region with
+; make_rom_region.py --target rp2350 --offset 0x3E0000.
+#COCO_ROM_OFFSET = $3E0000
+; The disk region: four .DSK slots of $28000 at $300000-$39FFFF.
+#COCO_DISK_OFFSET = $300000
+#COCO_DISK_FLASH_SLOTS = 4
+; The speaker link key the NES firmware keeps ("BTK1"), read only.
+#COCO_BTKEY_FLASH = $103FF000
+#COCO_HEADLESS = 0
 XIncludeFile "coco3_body.pico2"
 
 Procedure CocoBoardSetup()

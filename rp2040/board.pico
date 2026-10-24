@@ -14,6 +14,8 @@
 ; The disk region: four .DSK slots of $28000 at $150000-$1EFFFF, below the C64 emulator's region ($1F0000)
 ; and the Bluetooth key ($1FF000) other programs keep on the same board.
 #COCO_DISK_OFFSET = $150000
+#COCO_DISK_FLASH_SLOTS = 4
+#COCO_HEADLESS = 0
 ; The speaker link key the NES firmware keeps ("BTK1"), read only.
 #COCO_BTKEY_FLASH = $101FF000
 

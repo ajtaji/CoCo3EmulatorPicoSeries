@@ -1,6 +1,7 @@
 ; The board layer every Pico shares: USB text out, the service call, the LAFVIN ST7796 output, core 1
 ; (the picture), boot. The chip's board file sets #COCO_CLOCK_KHZ, #COCO_BOARD_NAME$, the ROM region and
-; supplies VideoBegin() and CocoLaunchCore1().
+; supplies VideoBegin() and CocoLaunchCore1(), and sets #COCO_HEADLESS (1: no panel - the picture is read
+; over USB only) and #COCO_DISK_FLASH_SLOTS (how many 160 KB disk slots its flash region holds).
 
 Declare VideoBegin()
 Declare.i CocoLaunchCore1()
@@ -54,7 +55,9 @@ EndProcedure
 ; ---------------------------------------------------------------- the panel
 
 Procedure VideoSendRow(y.i, pixels.i)
-  Tft796BlitRect(0, y, #VIDEO_OUT_W, 1, pixels)
+  CompilerIf #COCO_HEADLESS = 0
+    Tft796BlitRect(0, y, #VIDEO_OUT_W, 1, pixels)
+  CompilerEndIf
 EndProcedure
 
 ; Core 0 asks core 1 to stop drawing (for a capture over USB, or a flash write) and waits for it.
@@ -102,7 +105,7 @@ EndProcedure
 Global CocoFlashRefused.i
 Procedure.i CocoFlashSector(offset.i, src.i)
   Protected ok.i
-  If offset < #COCO_DISK_OFFSET Or offset + 4096 > #COCO_DISK_OFFSET + #DISK_SLOTS * #DISK_SLOT_BYTES Or (offset & $FFF)
+  If offset < #COCO_DISK_OFFSET Or offset + 4096 > #COCO_DISK_OFFSET + #COCO_DISK_FLASH_SLOTS * #DISK_SLOT_BYTES Or (offset & $FFF)
     CocoFlashRefused = CocoFlashRefused + 1
     ProcedureReturn 0
   EndIf
@@ -131,7 +134,7 @@ Procedure CocoBoot()
   MainE = CocoLoadRoms(#COCO_ROM_FLASH)
   CocoRomError = MainE
   CocoRomMessage(MainE)
-  DiskInit($10000000 + #COCO_DISK_OFFSET, #COCO_DISK_OFFSET)
+  DiskInit($10000000 + #COCO_DISK_OFFSET, #COCO_DISK_OFFSET, #COCO_DISK_FLASH_SLOTS)
   Say("disks:") : For MainT = 0 To #DISK_SLOTS - 1 : Say(" ") : Num(Bool(DiskBase(MainT) <> 0)) : Next : Eol()
   VideoBegin()
   Say("spi_hz=") : Num(SpiHz(0)) : Eol()
