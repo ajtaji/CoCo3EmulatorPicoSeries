@@ -11,3 +11,7 @@ private/
 *.DSK
 __pycache__/
 *.exe
+demo/*.hex
+demo/*.bin
+demo/*.slots.txt
+demo/*.coco.bin

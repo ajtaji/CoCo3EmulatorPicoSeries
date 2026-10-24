@@ -1,0 +1,13 @@
+# The PureMetal demo (demo/coco3demo.coco3, built to demo/coco3demo.dsk, flashed into drive 1 with
+# make_disk_region.py --drive 1): LOADM it from drive 1, run it, capture the GIME picture.
+expect 15 disks: 1 1
+screen 20 \r\nOK +\r\n
+line LOADM"1:COCO3DEM":EXEC
+wait 40
+expect 1 .
+cmd s
+expect 3 COCO frames
+screen 5 TEXT none
+capture build/demo_pico.png
+wait 4
+capture build/demo_pico2.png

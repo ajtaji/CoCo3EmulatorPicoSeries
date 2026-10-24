@@ -193,7 +193,7 @@ EndProcedure
 Global Win.i, Gl.i, UiScale.f, ScreenTex.l, ScreenSprite.GLSprite
 Global MouseDown.b, Wheel.i, KeyCode.i, KeyChar.i, PhysW.i, PhysH.i, RightTab.i, MemTop.i
 Global ShotPath$, ShotFrames.i, GetDpiForWindow_.i, QpcFreq.q
-Global Dim PartUs.q(7), Dim PartShown.f(7), PartLoops.q, ShowTiming.i
+Global Dim PartUs.q(7), Dim PartShown.f(7), PartLoops.q, ShowTiming.i, PassFrames.i
 
 Procedure.q MicroNow()
   Protected c.q
@@ -244,7 +244,9 @@ EndProcedure
 Procedure ScreenTextureUpload()
   If ScrDirty = 0 : ProcedureReturn : EndIf
   ScrDirty = 0
+  Protected t.q = MicroNow()
   ScreenRender()
+  PartUs(7) + MicroNow() - t
   glBindTexture_(#GL_TEXTURE_2D, ScreenTex)
   glTexSubImage2D_(#GL_TEXTURE_2D, 0, 0, 0, #SCR_W, #TEX_H, #GL_RGBA, #GL_UNSIGNED_BYTE, @ScrPix(0))
 EndProcedure
@@ -480,7 +482,7 @@ Procedure WindowRun()
         Repeat : EmuFrame() : n + 1 : Until MicroNow() - now > 15000
         due = MicroNow()
       Else
-        While now - due >= 0 And n < 4 : EmuFrame() : n + 1 : due + #FRAME_US : Wend
+        While now - due >= 0 And n < 12 : EmuFrame() : n + 1 : due + #FRAME_US : Wend   ; catch up after a slow flip
         If now - due > 200000 : due = now : EndIf
       EndIf
     Else
@@ -490,11 +492,11 @@ Procedure WindowRun()
     SpeedUpdate()
     now = MicroNow()
     DrawWindow()
-    PartUs(6) + MicroNow() - now : PartLoops + 1
+    PartUs(6) + MicroNow() - now : PartLoops + 1 : PassFrames + n
     If PartLoops >= 60 And ShowTiming = 0 : For n = 0 To 7 : PartUs(n) = 0 : Next : PartLoops = 0 : EmuCpuUs = 0 : EmuSndUs = 0 : EndIf
     If PartLoops >= 60
       HostOut("ms per pass: screen " + StrF(PartUs(0) / 60000.0, 2) + " controls " + StrF(PartUs(1) / 60000.0, 2) + " regs " + StrF(PartUs(2) / 60000.0, 2) +
-              " tab " + StrF(PartUs(3) / 60000.0, 2) + " end " + StrF(PartUs(4) / 60000.0, 2) + " emu " + StrF(PartUs(5) / 60000.0, 2) + " (cpu " + StrF(EmuCpuUs / 60000.0, 2) + " sound " + StrF(EmuSndUs / 60000.0, 2) + ") draw " + StrF(PartUs(6) / 60000.0, 2)) : Eol()
+              " tab " + StrF(PartUs(3) / 60000.0, 2) + " end " + StrF(PartUs(4) / 60000.0, 2) + " emu " + StrF(PartUs(5) / 60000.0, 2) + " (render " + StrF(PartUs(7) / 60000.0, 2) + " cpu " + StrF(EmuCpuUs / 60000.0, 2) + " sound " + StrF(EmuSndUs / 60000.0, 2) + ") draw " + StrF(PartUs(6) / 60000.0, 2) + " frames in 60 passes " + Str(PassFrames)) : Eol() : PassFrames = 0
       For n = 0 To 7 : PartUs(n) = 0 : Next : PartLoops = 0 : EmuCpuUs = 0 : EmuSndUs = 0
     EndIf
     If ShotPath$ <> "" And EmuFrames >= ShotFrames

@@ -1,0 +1,173 @@
+; PureMetal demo for the Tandy Color Computer 3: a 320 x 192 x 16 GIME picture that the palette sets moving,
+; a title in large letters, and a tune from the 6-bit DAC, played by the GIME's fast timer on FIRQ.
+;
+; Build: PureMetalForge.exe --compile coco3demo.coco3 -o coco3demo.hex   (writes COCO3DEM.BIN on coco3demo.dsk)
+; Run:   put coco3demo.dsk in drive 0, then LOADM"COCO3DEM":EXEC
+;
+; The picture lives in a PureMetal array: the variables sit at $8000-$FDFF in RAM the GIME can show, so the
+; program finds the array's physical address through the MMU ($FFA4 holds the block at $8000) and points the
+; GIME's video start ($FF9D/$FF9E, in units of 8 bytes) at it.
+
+Global Dim scr.a(30736)                   ; 160 bytes x 192 lines, and room to start on 8 bytes
+Global frame.a, base.u, level.a, note.a, left.a, rest.a
+Global Dim pal.a(16)
+
+; The tune: pairs of (timer value, frames). The timer counts at 3.58 MHz (279 ns) and the GIME reloads it with
+; the value plus two, so a half period of f Hz is 3579545 / (2 f) - 2 counts. 0 is a rest.
+DataSection
+  Tune:
+  Data.u 2714, 12, 2714, 12, 2562, 12, 2281, 12, 2281, 12, 2562, 12, 2714, 12, 3046, 12
+  Data.u 3418, 12, 3418, 12, 3046, 12, 2714, 12, 2714, 18, 3046, 6, 3046, 24
+  Data.u 2714, 12, 2714, 12, 2562, 12, 2281, 12, 2281, 12, 2562, 12, 2714, 12, 3046, 12
+  Data.u 3418, 12, 3418, 12, 3046, 12, 2714, 12, 3046, 18, 3418, 6, 3418, 24, 0, 24
+  TuneEnd:
+  ; 5 x 7 letters, one byte a row (bit 4 = left): P U R E M T A L C O 3 space
+  Font:
+  Data.a $1E, $11, $11, $1E, $10, $10, $10       ; P
+  Data.a $11, $11, $11, $11, $11, $11, $0E       ; U
+  Data.a $1E, $11, $11, $1E, $14, $12, $11       ; R
+  Data.a $1F, $10, $10, $1E, $10, $10, $1F       ; E
+  Data.a $11, $1B, $15, $15, $11, $11, $11       ; M
+  Data.a $1F, $04, $04, $04, $04, $04, $04       ; T
+  Data.a $0E, $11, $11, $1F, $11, $11, $11       ; A
+  Data.a $10, $10, $10, $10, $10, $10, $1F       ; L
+  Data.a $0E, $11, $10, $10, $10, $11, $0E       ; C
+  Data.a $0E, $11, $11, $11, $11, $11, $0E       ; O
+  Data.a $1E, $01, $01, $0E, $01, $01, $1E       ; 3
+  Data.a $00, $00, $00, $00, $00, $00, $00       ; space
+  Title1:
+  Data.a 0, 1, 2, 3, 4, 3, 5, 6, 7, 255          ; PUREMETAL
+  Title2:
+  Data.a 8, 9, 8, 9, 11, 10, 255                 ; COCO 3
+  ; GIME colours: black, then a ring of 14 for the bands, then white for the letters
+  Colours:
+  Data.a $00, $24, $26, $34, $36, $32, $12, $16, $1B, $09, $0B, $0D, $2D, $29, $20, $3F
+EndDataSection
+
+; The fast timer's interrupt: one half of the tone's square wave on the DAC (PIA1 PA2-PA7).
+ProcedureInterrupt FIRQ()
+  Protected ack.a
+  ack = PeekA($FF93)
+  If rest = 0
+    level = level ! $F0
+    PokeA($FF20, level | $02)
+  EndIf
+EndProcedure
+
+; 60 Hz: count frames and move the tune on.
+ProcedureInterrupt IRQ()
+  Protected ack.a, t.u
+  ack = PeekA($FF02)
+  frame = frame + 1
+  If left > 0
+    left = left - 1
+  Else
+    t = PeekU(?Tune + note * 4)
+    left = PeekU(?Tune + note * 4 + 2)
+    If t = 0
+      rest = 1
+    Else
+      rest = 0
+      PokeA($FF95, t & 255)
+      PokeA($FF94, t >> 8)                 ; writing the high byte reloads the timer
+    EndIf
+    note = note + 1
+    If ?Tune + note * 4 >= ?TuneEnd : note = 0 : EndIf
+  EndIf
+EndProcedure
+
+; One letter from the 5 x 7 font in colour 15 (white), each dot 6 x 6 pixels: 3 whole bytes on each of 6
+; rows. x0 is in BYTES (2 pixels each). The row's start is found once a row: a 6809 multiplies 8 bits only.
+Procedure Letter(ch.a, x0.u, y0.u)
+  Protected r.a, col.a, bits.a, dy.a, p.u, q.u
+  For r = 0 To 6
+    bits = PeekA(?Font + ch * 7 + r)
+    For dy = 0 To 5
+      p = base + (y0 + r * 6 + dy) * 160 + x0
+      For col = 0 To 4
+        If bits & ($10 >> col)
+          q = p + col * 3
+          scr(q) = $FF : scr(q + 1) = $FF : scr(q + 2) = $FF
+        EndIf
+      Next
+    Next
+  Next
+EndProcedure
+
+; A word of font indexes ending in 255, letters 18 bytes (36 pixels) apart.
+Procedure Words(label.u, x0.u, y0.u)
+  Protected i.a, ch.a
+  i = 0
+  ch = PeekA(label)
+  While ch <> 255
+    Letter(ch, x0 + i * 18, y0)
+    i = i + 1
+    ch = PeekA(label + i)
+  Wend
+EndProcedure
+
+Procedure Main()
+  Protected x.u, y.u, c.a, i.a, blk.a, off.u, phys.l, seen.a, p.u, band.a, r.a
+  DisableInterrupts
+  PokeA($FFD9, 0)                         ; 1.79 MHz
+  ; the array's physical address, rounded up to 8 bytes
+  blk = PeekA($FFA4) & $3F
+  off = @scr(0) - $8000
+  base = (8 - (off & 7)) & 7
+  phys = blk * 8192 + off + base
+  ; 320 x 192 x 16: bands of colour 1-14, 8 lines each, that the palette then rolls up the screen.
+
+  ; (written through a pointer: an indexed array store costs this compiler's 6809 code about 1,000 cycles
+  ; a byte, measured on the emulator; PokeA on a moving address is far less)
+  p = @scr(base)
+  band = 0 : r = 0
+  For y = 0 To 191
+    c = band + 1 : c = (c << 4) | c
+    For x = 0 To 159
+      PokeA(p, c) : p = p + 1
+    Next
+    r = r + 1
+    If r = 8
+      r = 0 : band = band + 1
+      If band = 14 : band = 0 : EndIf
+    EndIf
+  Next
+  Words(?Title1, 0, 30)                    ; PUREMETAL: 8 x 18 + 15 = 159 bytes, the whole width
+  Words(?Title2, 27, 110)
+  For i = 0 To 15
+    pal(i) = PeekA(?Colours + i)
+    PokeA($FFB0 + i, pal(i))
+  Next
+  ; the GIME: graphics, one line a row, 160 bytes, 16 colours, 192 lines; black border
+  PokeA($FF9D, (phys >> 11) & 255)
+  PokeA($FF9E, (phys >> 3) & 255)
+  PokeA($FF9F, 0)
+  PokeA($FF9C, 0)
+  PokeA($FF9A, 0)
+  PokeA($FF98, $80)
+  PokeA($FF99, $1E)
+  ; CoCo 3 mode, MMU, FIRQ from the GIME, constant $FE page, standard SCS
+  PokeA($FF90, $5C)
+  ; the fast timer (279 ns) on FIRQ
+  PokeA($FF91, $20)
+  PokeA($FF93, $20)
+  ; sound: the mux on the DAC (PIA0 CA2 and CB2 low), SNDEN on (PIA1 CB2 high)
+  PokeA($FF01, (PeekA($FF01) & $F7) | $30)
+  PokeA($FF03, (PeekA($FF03) & $F7) | $31)  ; and the vertical sync interrupt on
+  PokeA($FF23, PeekA($FF23) | $38)
+  level = $80
+  left = 0 : note = 0
+  EnableInterrupts
+  Repeat
+    While frame = seen : Wend
+    seen = frame
+    ; every other frame, turn the ring of band colours one step
+    If (frame & 1) = 0
+      c = pal(1)
+      For i = 1 To 13 : pal(i) = pal(i + 1) : PokeA($FFB0 + i, pal(i)) : Next
+      pal(14) = c : PokeA($FFBE, c)
+    EndIf
+  ForEver
+EndProcedure
+
+Main()

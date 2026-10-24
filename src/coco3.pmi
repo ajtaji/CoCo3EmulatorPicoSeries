@@ -122,14 +122,25 @@ EndProcedure
 ; Globals instead (as the 6502 precedent's driver loop).
 Global RunNeed.i, RunUsed.i
 Declare CocoLineHook()                   ; the host's: after each line (USB service on a Pico)
+; A GIME timer that falls due inside a line ends the CPU's window there, so its interrupt (a program making
+; a tone with the 279 ns timer, say) comes at the right instruction rather than at the next line.
+Global RunTimer.i
 Procedure CocoFrame()
   Repeat
     While CocoLinePos < #GIME_LINE_CLOCKS
       RunNeed = (#GIME_LINE_CLOCKS - CocoLinePos + CocoCycleClocks - 1) / CocoCycleClocks
+      If GimeTimerOn
+        RunTimer = GimeTimerDue - GimeNow - CocoLinePos
+        If RunTimer < #GIME_LINE_CLOCKS - CocoLinePos
+          RunNeed = (RunTimer + CocoCycleClocks - 1) / CocoCycleClocks
+          If RunNeed < 1 : RunNeed = 1 : EndIf
+        EndIf
+      EndIf
       CocoFolded = 0
       RunUsed = CocoCpuRun(RunNeed)
       CocoLinePos = CocoLinePos + (RunUsed - CocoFolded) * CocoCycleClocks
       CocoFolded = 0
+      If GimeTimerOn : GimeTimerRun(GimeNow + CocoLinePos) : EndIf
     Wend
     CocoLinePos = CocoLinePos - #GIME_LINE_CLOCKS
     CocoEndLine()
