@@ -12,6 +12,14 @@ Global Dim SoundRing.w(#SOUND_RING)
 Global SoundSamples.i                    ; samples ever written (the speaker's reader follows this)
 Global SoundNext.i, SoundFrac.i, SoundValue.i, SoundOn.i
 
+; THE COUPLING CAPACITOR. A real CoCo 3's sound reaches the TV through a capacitor, so a level that stays
+; put - the DAC at rest at the OK prompt - is silence. Without it the ring carried a constant -10240
+; (31% of full scale) from power-on, which a Bluetooth speaker's codec turned into a steady whine (Ron,
+; 2026-10-24). A one-pole high-pass, 1024 samples (21 ms, 7.5 Hz): SoundHp is the output x 1024; each
+; change of level adds the step, each sample takes 1/1024 off. A 523 Hz square droops 4% a half period.
+; The shifts are taken on a positive value so the rest settles at exactly 0, not -1.
+Global SoundHp.i
+
 Declare.i CocoAudioOn()
 ; Sampling runs only while something plays the ring.
 Procedure SoundStart()
@@ -21,8 +29,16 @@ EndProcedure
 Procedure SoundCatchUp(now.i)
   Protected v.i
   If SoundOn = 0 : ProcedureReturn : EndIf
-  v = SoundValue
   While now - SoundNext >= 0
+    If SoundHp < 0
+      SoundHp = SoundHp + ((0 - SoundHp) >> 10)
+      v = 0 - ((0 - SoundHp) >> 10)
+    Else
+      SoundHp = SoundHp - (SoundHp >> 10)
+      v = SoundHp >> 10
+    EndIf
+    If v > 32767 : v = 32767 : EndIf
+    If v < -32767 : v = -32767 : EndIf
     SoundRing(SoundSamples & (#SOUND_RING - 1)) = v
     SoundSamples = SoundSamples + 1
     SoundNext = SoundNext + 596
@@ -33,12 +49,14 @@ EndProcedure
 
 ; Called by the PIAs whenever a register the output depends on is written.
 Procedure CocoSoundChanged()
-  Protected level.i
+  Protected level.i, was.i
   SoundCatchUp(CocoTime())
   level = CocoSoundLevel()
+  was = SoundValue
   If CocoSoundOn = 0 And CocoBit = 0
     SoundValue = 0
   Else
     SoundValue = (level - 32) * 640
   EndIf
+  SoundHp = SoundHp + (SoundValue - was) * 1024
 EndProcedure
