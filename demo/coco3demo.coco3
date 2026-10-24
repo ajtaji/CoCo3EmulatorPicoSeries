@@ -9,11 +9,14 @@
 ; GIME's video start ($FF9D/$FF9E, in units of 8 bytes) at it.
 
 Global Dim scr.a(30736)                   ; 160 bytes x 192 lines, and room to start on 8 bytes
-Global frame.a, base.u, level.a, note.a, left.a, rest.a
+Global frame.a, base.u, level.a, note.a, left.a, rest.a, half.a
 Global Dim pal.a(16)
 
 ; The tune: pairs of (timer value, frames). The timer counts at 3.58 MHz (279 ns) and the GIME reloads it with
-; the value plus two, so a half period of f Hz is 3579545 / (2 f) - 2 counts. 0 is a rest.
+; the value plus two; the FIRQ turns the wave over every SECOND interrupt, so a half period of f Hz is
+; 3579545 / (4 f) - 2 counts (the 12-bit timer cannot count the lower octave itself): 523 - 784 Hz became
+; 262 - 392 Hz, an octave down from the first version, whose unbroken square wave at 523 - 784 Hz Ron
+; heard as a high-pitched tone (2026-10-24). 0 is a rest.
 DataSection
   Tune:
   Data.u 2714, 12, 2714, 12, 2562, 12, 2281, 12, 2281, 12, 2562, 12, 2714, 12, 3046, 12
@@ -48,7 +51,8 @@ EndDataSection
 ProcedureInterrupt FIRQ()
   Protected ack.a
   ack = PeekA($FF93)
-  If rest = 0
+  half = half ! 1
+  If rest = 0 And half = 0
     level = level ! $F0
     PokeA($FF20, level | $02)
   EndIf
@@ -61,6 +65,7 @@ ProcedureInterrupt IRQ()
   frame = frame + 1
   If left > 0
     left = left - 1
+    If left = 2 : rest = 1 : EndIf         ; the last 3 frames of a note are silent: notes, not one tone
   Else
     t = PeekU(?Tune + note * 4)
     left = PeekU(?Tune + note * 4 + 2)
