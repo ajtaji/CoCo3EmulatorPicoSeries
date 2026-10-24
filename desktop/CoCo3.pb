@@ -12,6 +12,8 @@
 ;   CoCo3.exe ... --log N [--type "text"] [--fast]   no window: N frames, a status line a second, the
 ;       screen as text at the end (--type types into the CoCo after boot, \n for ENTER).
 ;   CoCo3.exe ... --shot file.png N [--type "text"]  the window for N frames, then its picture, then exit.
+;   CoCo3.exe ... --wav file.wav [--mute]  also writes what the sound device was given (48 kHz mono) and
+;       file.wav.txt (underruns, skips, the reader's step, both threads' stalls); --mute plays silence.
 ; KEYS: typing goes to the CoCo keyboard (arrows, Esc = BREAK, Home = CLEAR, F1, F2); F5 run/pause,
 ;   F10 one instruction, F11 one frame, F3 reset, F8 full speed, F9 mute.
 ; The ROMs are Tandy's: none are in the repository.
@@ -531,6 +533,8 @@ For i = 0 To CountProgramParameters() - 1
       EndIf
     Case "--fast" : EmuFull = 1
     Case "--timing" : ShowTiming = 1
+    Case "--wav" : i + 1 : HostWav$ = ProgramParameter(i)
+    Case "--mute" : HostSndMuted = 1
     Case "--shot" : i + 1 : ShotPath$ = ProgramParameter(i) : i + 1 : ShotFrames = Val(ProgramParameter(i))
     Default
       For d = 0 To 3

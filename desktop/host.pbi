@@ -111,6 +111,7 @@ Global HostSndDevice.i, HostSndOpen.i, HostSndRead.i, HostSndMuted.i, HostSndUnd
 Global Dim HostSndHeader.WAVEHDR(#HOST_SND_BUFFERS - 1)
 Global Dim *HostSndBuf(#HOST_SND_BUFFERS - 1)
 Global CocoAudioLive.i
+Global HostSndSkips.i, HostSndOverruns.i, HostWav$, HostWavFile.i, HostWavBytes.i, HostSndEvents$
 
 Procedure.i CocoAudioOn()
   ProcedureReturn CocoAudioLive
@@ -118,6 +119,14 @@ EndProcedure
 Procedure CocoAudioReport()
 EndProcedure
 Procedure CocoAudioPoll()
+EndProcedure
+
+; --wav file: what the device was given, as a 48 kHz mono WAV, and file.txt: where the stream broke.
+Procedure HostWavHeader(f.i, bytes.i)
+  FileSeek(f, 0)
+  WriteLong(f, $46464952) : WriteLong(f, 36 + bytes) : WriteLong(f, $45564157) : WriteLong(f, $20746D66)
+  WriteLong(f, 16) : WriteWord(f, 1) : WriteWord(f, 1) : WriteLong(f, 48000) : WriteLong(f, 96000)
+  WriteWord(f, 2) : WriteWord(f, 16) : WriteLong(f, $61746164) : WriteLong(f, bytes)
 EndProcedure
 
 Procedure.i HostSoundOpen()
@@ -132,53 +141,111 @@ Procedure.i HostSoundOpen()
     waveOutPrepareHeader_(HostSndDevice, @HostSndHeader(i), SizeOf(WAVEHDR))
     HostSndHeader(i)\dwFlags | #WHDR_DONE
   Next
+  If HostWav$ <> ""
+    HostWavFile = CreateFile(#PB_Any, HostWav$)
+    If HostWavFile : HostWavHeader(HostWavFile, 0) : EndIf
+  EndIf
   HostSndOpen = 1 : CocoAudioLive = 1
   ProcedureReturn 1
 EndProcedure
 
-; The sound thread: hands the device each whole buffer of new samples as the machine makes them. waveOut
-; calls block for milliseconds at a time (24 ms a window pass, measured), so they are kept off the thread
-; that runs the machine and draws the window.
-Global HostSndThread.i, HostSndQuit.i
+; The sound thread. The machine makes 48,000 samples a second by the PC's timer; the sound device plays
+; 48,000 by its own clock, and the two differ (measured: the machine ran 0.13% ahead of the Bluetooth
+; speaker, so the backlog grew until the old reader jumped 449 samples forward every 7.25 s - Ron's click).
+; So the reader follows the device: it reads the machine's samples at a step a fraction of a percent
+; above or below one, to keep about #HOST_SND_TARGET samples between the machine and the speaker. A step
+; of 1.003 moves a 36-sample half period by 0.1 sample: nothing to hear. waveOut calls block for
+; milliseconds at a time (24 ms a window pass, measured), so they are kept off the machine's thread, and
+; the machine's 2048-sample ring is copied into a FIFO of its own once a frame (HostSoundPump), which a
+; blocked thread cannot overrun.
+#HOST_SND_FIFO = 65536                   ; samples, a power of two (1.4 s)
+#HOST_SND_TARGET = 4000                  ; samples queued or waiting (83 ms)
+#HOST_SND_LIMIT = 24000                  ; beyond this (the machine ran fast or was held) skip ahead
+Global Dim HostSndFifo.w(#HOST_SND_FIFO)
+Global HostFifoW.i, HostFifoR.q          ; HostFifoR: 32.16 fixed point
+Global HostSndThread.i, HostSndQuit.i, HostSndLast.i, HostSndStep.i = 65536, HostSndHeld.i, HostSndWrites.i, HostSndLatency.i = #HOST_SND_TARGET * 16, HostPumpAt.q, HostPumpGaps$, HostThreadAt.q
 Procedure HostSoundThread(*unused)
-  Protected i.i, k.i, *b, pending.i, wrote.i
+  Protected i.i, k.i, *b, pending.i, free.i, backlog.i, latency.i, pos.q, v.i
   While HostSndQuit = 0
-    wrote = 0
-    If SoundSamples - HostSndRead > #SOUND_RING - #HOST_SND_SAMPLES : HostSndRead = SoundSamples - #HOST_SND_SAMPLES : EndIf
-    If SoundSamples - HostSndRead >= #HOST_SND_SAMPLES
-      pending = 0
-      For i = 0 To #HOST_SND_BUFFERS - 1
-        If (HostSndHeader(i)\dwFlags & #WHDR_DONE) = 0 : pending + 1 : EndIf
-      Next
-      For i = 0 To #HOST_SND_BUFFERS - 1
-        If HostSndHeader(i)\dwFlags & #WHDR_DONE
-          If pending = 0 : HostSndUnderruns + 1 : EndIf
-          *b = *HostSndBuf(i)
-          For k = 0 To #HOST_SND_SAMPLES - 1
-            If HostSndMuted
-              PokeW(*b + k * 2, 0)
-            Else
-              PokeW(*b + k * 2, SoundRing((HostSndRead + k) & (#SOUND_RING - 1)))
-            EndIf
-          Next
-          HostSndHeader(i)\dwFlags & ~#WHDR_DONE
-          waveOutWrite_(HostSndDevice, @HostSndHeader(i), SizeOf(WAVEHDR))
-          wrote = 1
-          Break
-        EndIf
-      Next
-      HostSndRead + #HOST_SND_SAMPLES        ; (dropped when every buffer is queued: the machine is ahead)
+    If HostWav$ <> "" And HostThreadAt And ElapsedMilliseconds() - HostThreadAt > 30 : HostSndEvents$ + "sound thread gap " + Str(ElapsedMilliseconds() - HostThreadAt) + " ms at " + Str(HostWavBytes / 2) + #LF$ : EndIf
+    HostThreadAt = ElapsedMilliseconds()
+    pending = 0 : free = -1
+    For i = 0 To #HOST_SND_BUFFERS - 1
+      If HostSndHeader(i)\dwFlags & #WHDR_DONE
+        If free < 0 : free = i : EndIf
+      Else
+        pending + 1
+      EndIf
+    Next
+    backlog = HostFifoW - (HostFifoR >> 16)
+    If backlog > #HOST_SND_LIMIT
+      HostSndSkips + 1 : HostSndEvents$ + "skip " + Str(backlog - #HOST_SND_TARGET) + " at " + Str(HostWavBytes / 2) + #LF$
+      HostFifoR = (HostFifoW - #HOST_SND_TARGET) << 16
+      backlog = #HOST_SND_TARGET
     EndIf
-    If wrote = 0 : Delay(2) : EndIf
+    ; a buffer goes out when the machine has made it, or - so the speaker never falls silent with a jump
+    ; to 0 - holding the last level when the device is about to run dry (the machine paused or slow)
+    If free >= 0 And (backlog >= #HOST_SND_SAMPLES + 16 Or pending <= 1)
+      latency = backlog + pending * #HOST_SND_SAMPLES
+      HostSndLatency = HostSndLatency + latency - HostSndLatency / 16       ; (x16: averaged over 16 buffers)
+      HostSndStep = 65536 + (HostSndLatency / 16 - #HOST_SND_TARGET) / 8
+      If HostSndStep > 65536 + 330 : HostSndStep = 65536 + 330 : EndIf      ; +0.5%
+      If HostSndStep < 65536 - 330 : HostSndStep = 65536 - 330 : EndIf      ; -0.5%
+      If pending = 0 And HostWavBytes : HostSndUnderruns + 1 : HostSndEvents$ + "underrun at " + Str(HostWavBytes / 2) + #LF$ : EndIf
+      *b = *HostSndBuf(free)
+      pos = HostFifoR
+      For k = 0 To #HOST_SND_SAMPLES - 1
+        If (pos >> 16) < HostFifoW
+          v = HostSndFifo((pos >> 16) & (#HOST_SND_FIFO - 1)) : pos + HostSndStep
+        Else
+          v = HostSndLast : HostSndHeld + 1  ; (ran dry: hold, and read on from here when it comes)
+        EndIf
+        PokeW(*b + k * 2, v) : HostSndLast = v
+      Next
+      HostFifoR = pos
+      HostSndWrites + 1
+      If HostWav$ <> "" And HostSndWrites % 20 = 0
+        HostSndEvents$ + "w " + Str(HostSndWrites) + " pending " + Str(pending) + " backlog " + Str(backlog) + " step " + Str(HostSndStep - 65536) + " held " + Str(HostSndHeld) + #LF$
+      EndIf
+      If HostWavFile : WriteData(HostWavFile, *b, #HOST_SND_SAMPLES * 2) : EndIf
+      If HostSndMuted : FillMemory(*b, #HOST_SND_SAMPLES * 2, 0) : EndIf
+      HostSndHeader(free)\dwFlags & ~#WHDR_DONE
+      waveOutWrite_(HostSndDevice, @HostSndHeader(free), SizeOf(WAVEHDR))
+      HostWavBytes + #HOST_SND_SAMPLES * 2
+    Else
+      Delay(2)
+    EndIf
   Wend
 EndProcedure
 
+; Once a frame, on the machine's thread: the ring's new samples into the FIFO.
 Procedure HostSoundPump()
-  If HostSndOpen And HostSndThread = 0 : HostSndThread = CreateThread(@HostSoundThread(), 0) : EndIf
-  If HostSndOpen = 0 : HostSndRead = SoundSamples : EndIf
+  Protected n.i, now.q = ElapsedMilliseconds()
+  If HostSndOpen = 0 : HostSndRead = SoundSamples : ProcedureReturn : EndIf
+  If HostWav$ <> "" And HostPumpAt And now - HostPumpAt > 50 : HostPumpGaps$ + Str(now - HostPumpAt) + " ms at sample " + Str(HostFifoW) + #LF$ : EndIf
+  HostPumpAt = now
+  n = SoundSamples - HostSndRead
+  If n > #SOUND_RING
+    HostSndOverruns + 1                  ; (the machine's thread: counted only, the event text is the sound thread's)
+    HostSndRead = SoundSamples - #SOUND_RING
+  EndIf
+  While HostSndRead < SoundSamples
+    HostSndFifo(HostFifoW & (#HOST_SND_FIFO - 1)) = SoundRing(HostSndRead & (#SOUND_RING - 1))
+    HostSndRead + 1 : HostFifoW + 1
+  Wend
+  If HostSndThread = 0 : HostSndThread = CreateThread(@HostSoundThread(), 0) : EndIf
 EndProcedure
 
 Procedure HostSoundClose()
+  Protected f.i
   If HostSndThread : HostSndQuit = 1 : WaitThread(HostSndThread, 1000) : HostSndThread = 0 : EndIf
   If HostSndOpen : waveOutReset_(HostSndDevice) : waveOutClose_(HostSndDevice) : HostSndOpen = 0 : EndIf
+  If HostWavFile
+    HostWavHeader(HostWavFile, HostWavBytes) : CloseFile(HostWavFile) : HostWavFile = 0
+    f = CreateFile(#PB_Any, HostWav$ + ".txt")
+    If f
+      WriteString(f, "underruns " + Str(HostSndUnderruns) + " skips " + Str(HostSndSkips) + " ring overruns " + Str(HostSndOverruns) + " step at the end " + StrF(HostSndStep / 65536.0, 5) + #LF$ + HostSndEvents$ + "machine thread gaps:" + #LF$ + HostPumpGaps$)
+      CloseFile(f)
+    EndIf
+  EndIf
 EndProcedure
