@@ -48,7 +48,7 @@ for ($o = 0; $o -lt $uf2.Length; $o += 512) {
 }
 'Image ends at 0x{0:X8} ({1} bytes of flash)' -f $end, ($end - 0x10000000)
 if ($end -gt 0x10050000) { throw ('Image reaches 0x{0:X8}, past 0x10050000: on a shared board it would overwrite the NES ROM store' -f $end) }
-Get-FileHash -Algorithm SHA256 -LiteralPath $outputPath | Format-List Hash, Path
+"SHA-256 $((Get-FileHash -Algorithm SHA256 -LiteralPath $outputPath).Hash) $outputPath"
 if (!$Port -or $NoUpload) { return }
 
 $leaseDir = 'C:\PMFBuild\board-leases'
@@ -75,10 +75,13 @@ try {
     & py -3 @args2
     if ($LASTEXITCODE -ne 0) { throw "board.py exit $LASTEXITCODE" }
 } finally {
-    # another session may have the file open to read who holds it: retry until it is really gone
+    # Rename first, then delete. A delete while another session's poller has the file open only marks it
+    # "delete pending", and the name stays taken (and unreadable) until that handle closes - which held
+    # COM7 for minutes on 2026-10-23. A rename frees the name at once; the renamed file goes when it can.
+    $gone = "$leaseFile.$PID.released"
     for ($i = 0; $i -lt 50 -and (Test-Path -LiteralPath $leaseFile); $i++) {
-        Remove-Item -LiteralPath $leaseFile -ErrorAction SilentlyContinue
-        if (Test-Path -LiteralPath $leaseFile) { Start-Sleep -Milliseconds 200 }
+        try { [IO.File]::Move($leaseFile, $gone) } catch { Start-Sleep -Milliseconds 200 }
     }
-    if (Test-Path -LiteralPath $leaseFile) { Write-Warning "COULD NOT REMOVE $leaseFile - delete it by hand; it blocks the board" }
+    Remove-Item -LiteralPath $gone -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $leaseFile) { Write-Warning "COULD NOT RELEASE $leaseFile - delete it by hand; it blocks the board" }
 }

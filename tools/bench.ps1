@@ -16,6 +16,8 @@ $root = Split-Path $PSScriptRoot -Parent
 $compilerPath = (Resolve-Path -LiteralPath $Compiler).Path
 $compilerRoot = Split-Path $compilerPath -Parent
 $plan = @()
+# powershell -File passes 'a,b' as one string: split it
+$Jobs = @($Jobs | ForEach-Object { $_.Split(',') } | Where-Object { $_ })
 foreach ($job in $Jobs) {
     $parts = $job.Split('|')
     $src = [IO.Path]::GetFullPath((Join-Path $root $parts[0]))
@@ -33,7 +35,7 @@ while ($true) {
     try { New-Item -ItemType File -Path $leaseFile -ErrorAction Stop | Out-Null; break }
     catch {
         if ($waited -ge 3600) { throw "The $Port lease is still held after 60 minutes; nothing was uploaded." }
-        Start-Sleep -Seconds 30; $waited += 30
+        Start-Sleep -Seconds 10; $waited += 10
     }
 }
 $failed = 0
@@ -54,12 +56,15 @@ try {
         if ($LASTEXITCODE -ne 0) { "BOARD RUN FAILED (exit $LASTEXITCODE)"; $failed++ }
     }
 } finally {
-    # another session may have the file open to read who holds it: retry until it is really gone
+    # Rename first, then delete. A delete while another session's poller has the file open only marks it
+    # "delete pending", and the name stays taken (and unreadable) until that handle closes - which held
+    # COM7 for minutes on 2026-10-23. A rename frees the name at once; the renamed file goes when it can.
+    $gone = "$leaseFile.$PID.released"
     for ($i = 0; $i -lt 50 -and (Test-Path -LiteralPath $leaseFile); $i++) {
-        Remove-Item -LiteralPath $leaseFile -ErrorAction SilentlyContinue
-        if (Test-Path -LiteralPath $leaseFile) { Start-Sleep -Milliseconds 200 }
+        try { [IO.File]::Move($leaseFile, $gone) } catch { Start-Sleep -Milliseconds 200 }
     }
-    if (Test-Path -LiteralPath $leaseFile) { Write-Warning "COULD NOT REMOVE $leaseFile - delete it by hand; it blocks the board" }
+    Remove-Item -LiteralPath $gone -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $leaseFile) { Write-Warning "COULD NOT RELEASE $leaseFile - delete it by hand; it blocks the board" }
     "Lease released"
 }
 if ($failed) { exit 1 }

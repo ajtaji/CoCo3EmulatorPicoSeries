@@ -1,0 +1,17 @@
+# rp2040/coco3.picow with a blank disk in drive 0 (tools/make_disk_region.py): save, list, reload, run.
+expect 15 disks: 1
+screen 20 \r\nOK +\r\n
+line DIR
+screen 10 FREE|\r\n *68 +\r\n|OK
+line 10 PRINT "SAVED ON A PICO"
+line SAVE "PICO"
+screen 20 SAVE "PICO" +\r\nOK
+line NEW
+line DIR
+screen 10 PICO +BAS
+line LOAD "PICO"
+line RUN
+screen 15 \r\nSAVED ON A PICO +\r\n
+line PRINT FREE(0)
+cmd s
+expect 3 COCO frames
