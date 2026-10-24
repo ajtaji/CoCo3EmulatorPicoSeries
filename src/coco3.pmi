@@ -83,7 +83,7 @@ Procedure CocoTextDump()
   Protected rows.i, row.i, i.i, d.i, c.i, addr.i, stride.i, cols.i
   VideoDecode()
   If VdText = 0
-    Say("TEXT none (graphics mode)") : Eol() : ProcedureReturn
+    Say("TEXT none (graphics mode)") : Eol() : Say("TEXT_END") : Eol() : ProcedureReturn
   EndIf
   cols = VdBytes
   If VdLpr = 255 : rows = 1 : Else : rows = VdBodyLines / VdLpr : EndIf

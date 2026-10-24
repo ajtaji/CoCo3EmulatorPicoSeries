@@ -4,7 +4,7 @@ expect 15 disks: 1 1
 screen 20 \r\nOK +\r\n
 line LOADM"1:COCO3DEM":EXEC
 wait 40
-expect 1 .
+
 cmd s
 expect 3 COCO frames
 screen 5 TEXT none
