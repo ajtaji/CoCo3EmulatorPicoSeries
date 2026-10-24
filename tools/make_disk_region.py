@@ -7,8 +7,10 @@
 initialised as DSKINI leaves it (granule table $FF, directory entries $FF). A slot not named is left as
 it is on the board (its sectors are not in the UF2). Only the named slots are written, whole.
 
-Slot layout (src/disk.pmi reads it): +$0000 "CDSK", version 1, image bytes, tracks, sides, sectors per
-track (18), JVC header length; +$1000 the image as the file holds it (its JVC header included).
+Slot layout (src/disk.pmi reads it): +$0000 "CDSK", version 2, image bytes, tracks, sides, sectors per
+track (18), JVC header length; +$100 the image as the file holds it (its JVC header included).
+A slot is $28000 bytes: a 35-track single-sided disk (161,280 bytes) fits; a larger image is refused.
+The four slots run $150000-$1EFFFF on a Pico W, below the C64 emulator's region at $1F0000.
 """
 import argparse
 import struct
@@ -17,7 +19,8 @@ from pathlib import Path
 
 FAMILY = {'rp2040': 0xE48BFF56, 'rp2350': 0xE48BFF59}
 OFFSET = {'rp2040': 0x150000, 'rp2350': 0x300000}
-SLOT = 0x29000
+SLOT = 0x28000
+DATA = 0x100
 
 
 def uf2_blocks(data, base, family):
@@ -59,11 +62,11 @@ def main():
         tracks = body // (18 * 256 * sides)
         if not 1 <= tracks <= 80:
             sys.exit(f'{name}: {tracks} tracks; 1-80 are supported. Nothing was written.')
-        if 0x1000 + len(data) > SLOT:
-            sys.exit(f'{name}: {len(data)} bytes does not fit a slot of {SLOT - 0x1000}. Nothing was written.')
+        if DATA + len(data) > SLOT:
+            sys.exit(f'{name}: {len(data)} bytes does not fit a slot of {SLOT - DATA}. Nothing was written.')
         slot = bytearray(b'\xff' * SLOT)
-        slot[0:28] = b'CDSK' + struct.pack('<6I', 1, len(data), tracks, sides, 18, head)
-        slot[0x1000:0x1000 + len(data)] = data
+        slot[0:28] = b'CDSK' + struct.pack('<6I', 2, len(data), tracks, sides, 18, head)
+        slot[DATA:DATA + len(data)] = data
         blocks += uf2_blocks(bytes(slot), base + n * SLOT, FAMILY[a.target])
         print(f'drive {n}: {name}, {tracks} tracks, {sides} side(s), flash ${base - 0x10000000 + n * SLOT:06X}')
     out = bytearray()

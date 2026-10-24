@@ -28,20 +28,13 @@ foreach ($job in $Jobs) {
     }
     $plan += , @($img, $(if ($parts.Count -gt 1 -and $parts[1]) { [IO.Path]::GetFullPath((Join-Path $root $parts[1])) } else { '' }), $(if ($parts.Count -gt 2) { $parts[2] } else { '10' }))
 }
-$leaseFile = "C:\PMFBuild\board-leases\$Port.lease"
-[IO.Directory]::CreateDirectory((Split-Path $leaseFile)) | Out-Null
-$waited = 0
-while ($true) {
-    try { New-Item -ItemType File -Path $leaseFile -ErrorAction Stop | Out-Null; break }
-    catch {
-        if ($waited -ge 3600) { throw "The $Port lease is still held after 60 minutes; nothing was uploaded." }
-        Start-Sleep -Seconds 10; $waited += 10
-    }
-}
+# The shared boards are taken and given back only through the lease folder's own lease.ps1 (it writes
+# the lease in one call, releases by rename-then-delete, and only its owner releases it).
+. 'C:\PMFBuild\board-leases\lease.ps1'
+$leaseObj = Get-BoardLease -Port $Port -Owner $Lease -Minutes (2 + 2 * $plan.Count)
 $failed = 0
 try {
-    Set-Content -LiteralPath $leaseFile -Value "$Lease $(Get-Date -Format o) bench $($plan.Count) jobs"
-    "Lease taken after $waited s"
+    "Lease taken: $($leaseObj.Tag)"
     foreach ($p in $plan) {
         "=== $($p[0])"
         $up = Start-Process -FilePath $compilerPath -ArgumentList ('--radio-firmware "' + $p[0] + '" --port ' + $Port) `
@@ -56,15 +49,7 @@ try {
         if ($LASTEXITCODE -ne 0) { "BOARD RUN FAILED (exit $LASTEXITCODE)"; $failed++ }
     }
 } finally {
-    # Rename first, then delete. A delete while another session's poller has the file open only marks it
-    # "delete pending", and the name stays taken (and unreadable) until that handle closes - which held
-    # COM7 for minutes on 2026-10-23. A rename frees the name at once; the renamed file goes when it can.
-    $gone = "$leaseFile.$PID.released"
-    for ($i = 0; $i -lt 50 -and (Test-Path -LiteralPath $leaseFile); $i++) {
-        try { [IO.File]::Move($leaseFile, $gone) } catch { Start-Sleep -Milliseconds 200 }
-    }
-    Remove-Item -LiteralPath $gone -ErrorAction SilentlyContinue
-    if (Test-Path -LiteralPath $leaseFile) { Write-Warning "COULD NOT RELEASE $leaseFile - delete it by hand; it blocks the board" }
+    Release-BoardLease $leaseObj
     "Lease released"
 }
 if ($failed) { exit 1 }

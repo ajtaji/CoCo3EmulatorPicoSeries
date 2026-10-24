@@ -5,9 +5,7 @@
 #   tools\build.ps1 -Compiler <pmf> -Port COM7 -Script tests\basic_hello.txt  # upload, then run a board.py script
 #
 # The image must end below flash $10050000 (the NES ROM store other programs on a shared board keep
-# at $50000) and below the CoCo 3's own regions ($140000 up), which the compiler checks itself
-# through FlashRegion. A board shared between sessions is leased while it is used:
-# C:\PMFBuild\board-leases\<port>.lease is created exclusively and removed afterwards.
+# at $50000). A shared board is taken and given back only through C:\PMFBuild\board-leases\lease.ps1.
 param(
     [Parameter(Mandatory = $true)][string]$Compiler,
     [string]$Source = 'rp2040\coco3.picow',
@@ -51,21 +49,9 @@ if ($end -gt 0x10050000) { throw ('Image reaches 0x{0:X8}, past 0x10050000: on a
 "SHA-256 $((Get-FileHash -Algorithm SHA256 -LiteralPath $outputPath).Hash) $outputPath"
 if (!$Port -or $NoUpload) { return }
 
-$leaseDir = 'C:\PMFBuild\board-leases'
-[IO.Directory]::CreateDirectory($leaseDir) | Out-Null
-$leaseFile = Join-Path $leaseDir "$Port.lease"
-$waited = 0
-while ($true) {
-    try { New-Item -ItemType File -Path $leaseFile -ErrorAction Stop | Out-Null; break }
-    catch {
-        $holder = Get-Content -LiteralPath $leaseFile -Raw -ErrorAction SilentlyContinue
-        if ($waited -ge 3600) { throw "The $Port lease is still held after 60 minutes ($holder); nothing was uploaded." }
-        if ($waited % 300 -eq 0) { "Lease held ($holder); waiting, retrying every 30 s." }
-        Start-Sleep -Seconds 30; $waited += 30
-    }
-}
+. 'C:\PMFBuild\board-leases\lease.ps1'
+$leaseObj = Get-BoardLease -Port $Port -Owner $Lease -Minutes 4
 try {
-    Set-Content -LiteralPath $leaseFile -Value "$Lease $(Get-Date -Format o)"
     $up = Start-Process -FilePath $compilerPath -ArgumentList ('--radio-firmware "' + $outputPath + '" --port ' + $Port) `
         -WorkingDirectory $compilerRoot -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput ($outputPath + '.upload.log') -RedirectStandardError ($outputPath + '.upload.err')
     Get-Content ($outputPath + '.upload.log') | Select-Object -Last 8
@@ -75,13 +61,5 @@ try {
     & py -3 @args2
     if ($LASTEXITCODE -ne 0) { throw "board.py exit $LASTEXITCODE" }
 } finally {
-    # Rename first, then delete. A delete while another session's poller has the file open only marks it
-    # "delete pending", and the name stays taken (and unreadable) until that handle closes - which held
-    # COM7 for minutes on 2026-10-23. A rename frees the name at once; the renamed file goes when it can.
-    $gone = "$leaseFile.$PID.released"
-    for ($i = 0; $i -lt 50 -and (Test-Path -LiteralPath $leaseFile); $i++) {
-        try { [IO.File]::Move($leaseFile, $gone) } catch { Start-Sleep -Milliseconds 200 }
-    }
-    Remove-Item -LiteralPath $gone -ErrorAction SilentlyContinue
-    if (Test-Path -LiteralPath $leaseFile) { Write-Warning "COULD NOT RELEASE $leaseFile - delete it by hand; it blocks the board" }
+    Release-BoardLease $leaseObj
 }

@@ -5,21 +5,22 @@ with PureMetalForge to bare-metal machine code. The CPU is the computed-goto 680
 [6809EmulatorPicoSeries](../6809EmulatorPicoSeries) (clone it beside this repository); this repository
 is the machine around it.
 
-**No ROMs are included.** The CoCo 3 ROM and Disk BASIC are Tandy's; you load your own copies into
-the board's flash with the tools below. The firmware image contains none of them.
+**No ROMs are included.** The CoCo 3 ROM and Disk BASIC are Tandy's. `tools/build_roms.ps1` assembles
+them from the disassembled sources of [tomctomc/coco_roms](https://github.com/tomctomc/coco_roms) (checked
+against the SHA-1s MAME lists) and puts them in the board's flash; the firmware image contains none of them.
 
 ## What is emulated
 
 | Part | State |
 |---|---|
 | GIME MMU: 8 KB pages, two task register sets, MMU on/off, ROM modes (16K/16K, 32K internal, 32K external), the $FExx constant page, all-RAM mode (SAM TY) | written |
-| GIME video: text 32/40/64/80 columns with attributes (colours, blink, underline), graphics 16-160 bytes a row in 2/4/16 colours, 192/200/225 lines, the palette, border, vertical scroll, horizontal offset and virtual width | written, diagnostic on the board pending |
+| GIME video: text 32/40/64/80 columns with attributes (colours, blink, underline), graphics 16-160 bytes a row in 2/4/16 colours, 192/200/225 lines, the palette, border, vertical scroll, horizontal offset and virtual width | run on the board (diagnostic, every mode captured) |
 | VDG-compatible modes (CoCo 1/2 software): 32 x 16 text with MC6847T1 lower case, semigraphics 4, the CG and RG graphics modes, SAM display offset | written |
 | GIME interrupts: timer (63.5 us and 279 ns inputs), HBORD, VBORD, keyboard (EI1); IRQ and FIRQ routing; PIA0 HSYNC/VSYNC interrupts; PIA1 FIRQ | written |
 | PIA0: keyboard matrix (with ALT, CTRL, F1, F2), joystick comparator and mux; PIA1: 6-bit DAC, single-bit sound, SNDEN, RAM size sense | written |
-| 0.89 / 1.79 MHz ($FFD8/$FFD9), paced to the real machine's 59.94 frames a second | written |
-| FD-502 disk controller: DSKREG and a WD1793, four .DSK drives in flash, writes kept | written |
-| Sound to a Bluetooth speaker | sampling written (48 kHz ring); speaker output not yet |
+| 0.89 / 1.79 MHz ($FFD8/$FFD9), paced to the real machine's 59.92 frames a second (262 lines of 1824 GIME clocks) | run on the board (both speeds measured) |
+| FD-502 disk controller: DSKREG and a WD1793, four .DSK drives in flash, writes kept | run on the board: DIR, SAVE, LOAD |
+| Sound to a Bluetooth speaker | written: 48 kHz DAC sampling and the speaker path (private build, it compiles); not yet heard on the board |
 | Cassette, RS-232, cartridge autostart, joystick hardware | not emulated |
 
 Guest RAM is **128 KB** on both boards. 512 KB does not fit: on the Pico W the 6809 core's code takes
@@ -39,17 +40,20 @@ The keyboard is the PC's, over the board's USB serial port: `py -3 tools/console
 
 | Board | Program | ROMs (`make_rom_region.py`) | Disks (`make_disk_region.py`) |
 |---|---|---|---|
-| Pico W | below $50000 | $140000-$14FFFF | $150000-$1F3FFF (4 x $29000) |
-| Pico 2 W | below $50000 | $3E0000-$3EFFFF | $300000-$3A3FFF |
+| Pico W | below $50000 | $140000-$14FFFF | $150000-$1EFFFF (4 x $28000) |
+| Pico 2 W | below $50000 | $3E0000-$3EFFFF | $300000-$39FFFF (overlaps a PDP-11 RK0 pack at $240000-$3FFFFF: not both) |
 
-These stay clear of the NES ROM store, the radio firmware and the Bluetooth link key that other
+On the Pico W these stay clear of the NES ROM store, the radio firmware, the C64 emulator's region ($1F0000)
+and the Bluetooth link key that other
 programs keep on the same boards.
 
 ## Use
 
 ```powershell
-py -3 tools/make_rom_region.py --rom <your coco3.rom> --cart <your disk11.rom> --out private/coco_rom.uf2
+tools/build_roms.ps1 -Source <clone of coco_roms> -Out private/coco_rom.uf2
 & <PureMetalForge.exe> --radio-firmware private/coco_rom.uf2 --port COM7
+py -3 tools/make_disk_region.py --drive 0 blank --out private/disks.uf2
+& <PureMetalForge.exe> --radio-firmware private/disks.uf2 --port COM7
 tools/build.ps1 -Compiler <PureMetalForge.exe> -Port COM7
 py -3 tools/console.py --port COM7
 ```
@@ -61,7 +65,21 @@ text on the screen, `c` capture, `f` full speed, `p` CPU registers, `r` reset.
 
 ## Measured
 
-Nothing is claimed until it has run on a board; results go here with the commands that produced them.
+Pico W (RP2040 at 200 MHz), the LAFVIN panel attached, 2026-10-23. Every figure is the firmware's own
+status line read over USB by `tools/board.py`; the scripts are in `tests/`.
+
+- **Boots Disk Extended Color BASIC 2.1** to `OK` and runs a typed program (`tests/basic_boot.txt`:
+  `PRINT 2+3`, then `10 FOR I=1 TO 5 / 20 PRINT I*I / 30 NEXT I / RUN` prints 1 4 9 16 25).
+- **Speed against a real CoCo 3** (`tests/speed.txt`, BASIC running `10 A=A+1:GOTO 10`):
+
+  | | real CoCo 3 | here, paced | here, unthrottled (monitor `f`) |
+  |---|---:|---:|---:|
+  | 0.89 MHz | 894.9 kHz, 59.92 frames/s | 894 kHz, 59.92 frames/s, core 0 29% busy | **3,064 kHz, 205 frames/s = 3.43x** |
+  | 1.79 MHz (`POKE 65497,0`) | 1,789.8 kHz | 1,790 kHz, core 0 44% busy | **4,034 kHz, 135 frames/s = 2.25x** |
+
+  Paced is the default: the machine runs at exactly the real machine's rate. The unthrottled rate at
+  0.89 MHz is lower in kHz because the machine's per-scanline work is the same at both speeds.
+- Disk: `DIR`, `SAVE "PICO"`, `LOAD "PICO"` on a blank disk in flash (`tests/disk.txt`).
 
 ## Sources
 

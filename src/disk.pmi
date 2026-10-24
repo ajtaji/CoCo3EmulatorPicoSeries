@@ -10,12 +10,13 @@
 ; last byte - raising it on the last byte would let the NMI cut the loop before that byte is stored.
 ; (MAME coco_fdc.cpp update_lines: NMI = INTRQ and DSKREG bit 5; INTRQ clears HALT enable.)
 ;
-; THE DISK REGION: four slots of $29000 bytes from #COCO_DISK_OFFSET. A slot starts with a 4 KB header
-; (tools/make_disk_region.py): "CDSK", version 1, image bytes, tracks, sides, sectors per track, the
-; JVC header length, then the image at +$1000 (sector 1 of track 0 side 0 first, 256 bytes a sector).
+; THE DISK REGION: four slots of $28000 bytes from #COCO_DISK_OFFSET. A slot starts with a 256-byte header
+; (tools/make_disk_region.py): "CDSK", version 2, image bytes, tracks, sides, sectors per track, the JVC
+; header length, then the image at +$100 (sector 1 of track 0 side 0 first, 256 bytes a sector). The
+; slots end below the C64 emulator's region at $1F0000 on the shared Pico W.
 
 #DISK_SLOTS = 4
-#DISK_SLOT_BYTES = $29000
+#DISK_SLOT_BYTES = $28000                ; 160 KB: a 35-track single-sided disk and its header
 #DISK_SECTOR = 256
 
 Declare.i CocoFlashSector(offset.i, src.i)
@@ -43,11 +44,11 @@ Procedure DiskInit(base.i, flash.i)
   For i = 0 To #DISK_SLOTS - 1
     slot = base + i * #DISK_SLOT_BYTES
     DiskBase(i) = 0 : DiskHead(i) = 0
-    If PeekL(slot) = $4B534443 And PeekL(slot + 4) = 1   ; "CDSK"
+    If PeekL(slot) = $4B534443 And PeekL(slot + 4) = 2   ; "CDSK" version 2
       DiskTracks(i) = PeekL(slot + 12) : DiskSides(i) = PeekL(slot + 16) : DiskSpt(i) = PeekL(slot + 20)
-      If DiskTracks(i) > 0 And DiskTracks(i) <= 80 And DiskSides(i) >= 1 And DiskSides(i) <= 2 And DiskSpt(i) = 18
-        DiskBase(i) = slot + $1000 + PeekL(slot + 24)
-        DiskFlash(i) = flash + i * #DISK_SLOT_BYTES + $1000 + PeekL(slot + 24)
+      If DiskTracks(i) > 0 And DiskSides(i) >= 1 And DiskSides(i) <= 2 And DiskSpt(i) = 18 And $100 + PeekL(slot + 24) + DiskTracks(i) * DiskSides(i) * 18 * 256 <= #DISK_SLOT_BYTES
+        DiskBase(i) = slot + $100 + PeekL(slot + 24)
+        DiskFlash(i) = flash + i * #DISK_SLOT_BYTES + $100 + PeekL(slot + 24)
       EndIf
     EndIf
   Next

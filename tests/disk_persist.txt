@@ -1,0 +1,12 @@
+# After tests/disk.txt and a fresh upload of the firmware: the disk in flash still holds PICO.BAS.
+expect 15 disks: 1
+screen 20 \r\nOK +\r\n
+line DIR
+screen 10 PICO +BAS
+line LOAD "PICO"
+screen 15 LOAD "PICO" +\r\nOK +\r\n
+line RUN
+screen 15 \r\nSAVED ON A PICO +\r\n
+capture build/disk.png
+cmd s
+expect 3 COCO frames
