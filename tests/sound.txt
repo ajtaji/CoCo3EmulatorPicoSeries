@@ -1,0 +1,14 @@
+# The private build (private/coco3_bt.picow names the speaker): BASIC's SOUND and PLAY through the 6-bit DAC,
+# sampled at 48 kHz and sent to the Bluetooth speaker. The status line carries the speaker's counters.
+expect 60 Sound: (playing|Bluetooth error)
+expect 1 Sound: playing
+screen 20 \r\nOK +\r\n
+cmd s
+line SOUND 100,60
+wait 4
+cmd s
+expect 3 bt_live=1
+line PLAY "T5;O3;CDEFGAB;O4;C"
+wait 6
+cmd s
+expect 3 bt_live=1
