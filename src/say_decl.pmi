@@ -1,0 +1,5 @@
+; The log a Pico board writes to (board_common.pmi defines these over USB serial). A PC build defines
+; Say as a macro over a string procedure instead (desktop/CoCo3.pb), so it does not include this file.
+Declare Say(*text)
+Declare Num(v.i)
+Declare Eol()

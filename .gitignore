@@ -10,3 +10,4 @@ private/
 *.dsk
 *.DSK
 __pycache__/
+*.exe

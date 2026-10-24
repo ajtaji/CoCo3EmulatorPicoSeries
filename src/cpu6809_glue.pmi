@@ -2,9 +2,6 @@
 ; by the wrapper with #CPU_TIMING = 1 so CpuRun's budget is E cycles). The core is used as it is.
 
 Global CocoInWindow.i, CocoCpuStopReported.i
-Declare Say(*text.i)
-Declare Num(v.i)
-Declare Eol()
 
 Procedure CocoCpuReset()
   CpuReset()

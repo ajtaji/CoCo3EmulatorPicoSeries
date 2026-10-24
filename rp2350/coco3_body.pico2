@@ -2,6 +2,8 @@
 ; #VIDEO_RGB and #COCO_AUDIO (1: the Bluetooth speaker libraries; a private wrapper then names the
 ; speaker), defines CocoBoardSetup() and CocoFrameHook(), and calls Main().
 EnableExplicit
+#COCO_RAM_PAGES = 16                     ; 128 KB
+#COCO_RAM_LAYOUT = 0                     ; one array per 8 KB page
 XIncludeFile "RP2350/Lib/multicore_smp.pico2"
 XIncludeFile "RP2350/Lib/clocks.pico2"
 XIncludeFile "RP2350/Lib/timer.pico2"
@@ -12,6 +14,7 @@ XIncludeFile "RP2350/Lib/flashid.pico2"
 XIncludeFile "RP2350/Lib/flash.pico2"
 XIncludeFile "RP2350/Lib/spi.pico2"
 XIncludeFile "RP2350/Lib/st7796.pico2"
+XIncludeFile "../src/say_decl.pmi"
 XIncludeFile "../../6809EmulatorPicoSeries/src/cpu6809.pico2"
 XIncludeFile "../src/cpu6809_glue.pmi"
 XIncludeFile "../src/machine.pmi"
@@ -34,5 +37,6 @@ CompilerElse
   XIncludeFile "../src/audio_none.pmi"
 CompilerEndIf
 XIncludeFile "../src/coco3.pmi"
+XIncludeFile "../src/monitor.pmi"
 XIncludeFile "board.pico2"
 

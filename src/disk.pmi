@@ -1,6 +1,6 @@
 ; The FD-502 floppy controller: its control latch DSKREG ($FF40) and a WD1793 ($FF48-$FF4B), with up
-; to four drives whose .DSK (JVC) images live in the board's flash. Chip-independent; the board file
-; supplies CocoFlashSector(offset, src): erase one 4 KB flash sector and program it from SRAM.
+; to four drives holding .DSK (JVC) images: in the board's flash on a Pico, files on a PC. The host
+; supplies DiskStore(d, off, src), which keeps a written sector.
 ;
 ; How Disk BASIC moves a sector, and why the interrupt comes when it does: it starts a read or write,
 ; sets DSKREG's HALT enable, and loops LDA/STA on the data register with no test at all. The real
@@ -19,8 +19,6 @@
 #DISK_SLOT_BYTES = $28000                ; 160 KB: a 35-track single-sided disk and its header
 #DISK_SECTOR = 256
 
-Declare.i CocoFlashSector(offset.i, src.i)
-Declare CocoNmi()
 
 Global DiskReg.i
 Global WdStatus.i, WdTrack.i, WdSector.i, WdData.i, WdCmd.i, WdDir.i = 1
@@ -34,7 +32,6 @@ Global Dim DiskSpt.i(#DISK_SLOTS)
 Global Dim DiskHead.i(#DISK_SLOTS)       ; where each drive's head is (physical track)
 Global Dim WdAddr.a(6)
 Global Dim WdBuf.a(256)                  ; the sector being written
-Global Dim DiskSectorBuf.a(4096)         ; one flash sector, for read-modify-write
 Global DiskWriteErrors.i, DiskReads.i, DiskWrites.i, DiskRegionBase.i, DiskRegionFlash.i
 
 ; Find the images in the disk region (base = its flash address, flash = its offset).
@@ -95,15 +92,11 @@ Procedure.i DiskReady()
   ProcedureReturn Bool(DiskBase(d) <> 0)
 EndProcedure
 
-; Write the 256 bytes in WdBuf at image offset `off` of drive d: read the flash sector around it,
-; patch, erase, program. Returns 1, or 0 with the write counted as an error.
+; Write 256 bytes from src to image offset `off` of drive d: the host keeps them (the Pico rewrites the
+; flash sector around them, the PC its .DSK file). Returns 1, or 0 with the write counted as an error.
+Declare.i DiskStore(d.i, off.i, src.i)
 Procedure.i DiskCommit(d.i, off.i, src.i)
-  Protected flashOff.i, sect.i, i.i
-  flashOff = DiskFlash(d) + off
-  sect = flashOff & ~$FFF
-  For i = 0 To 4095 : DiskSectorBuf(i) = PeekA($10000000 + sect + i) : Next
-  For i = 0 To 255 : DiskSectorBuf((flashOff & $FFF) + i) = PeekA(src + i) : Next
-  If CocoFlashSector(sect, @DiskSectorBuf(0)) = 0
+  If DiskStore(d, off, src) = 0
     DiskWriteErrors = DiskWriteErrors + 1
     ProcedureReturn 0
   EndIf

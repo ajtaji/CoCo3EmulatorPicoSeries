@@ -1,0 +1,137 @@
+; The Picos' run loop and USB monitor (status, the screen as text, the picture, full speed, reset).
+; Board files supply CocoBoardService() (USB and the watchdog), Micros() and the USB serial library.
+
+; ---------------------------------------------------------------- the rendered picture, over USB
+
+; CAP_BEGIN, then 240 lines x 480 RGB565 pixels (low byte first), then CAP_END. The same renderer the
+; panel gets, run here on core 0 with core 1 parked.
+Procedure CocoCapture()
+  Protected line.i, x.i
+  CocoParkVideo(1)
+  Say("CAP_BEGIN w=480 h=240") : Eol()
+  For line = 0 To #VIDEO_LINES - 1
+    VideoRenderLine(line)
+    For x = 0 To 479
+      UsbSerialWrite(VideoOut(x) & 255) : UsbSerialWrite(VideoOut(x) >> 8)
+    Next
+    CocoBoardService()
+  Next
+  Eol() : Say("CAP_END") : Eol()
+  CocoParkVideo(0)
+EndProcedure
+
+; ---------------------------------------------------------------- status
+
+Procedure CocoStatus(now.i)
+  Protected dt.i, frames.i, cycles.i, run.i
+  dt = now - CocoStatAt
+  If dt <= 0 : ProcedureReturn : EndIf
+  frames = CocoFrames - CocoStatFrames
+  cycles = CpuCycles - CocoStatCycles
+  run = CocoRunUs - CocoStatRun
+  Say("COCO frames=") : Num(CocoFrames)
+  Say(" fps_x100=") : Num((frames * 100000) / (dt / 1000))
+  Say(" cpu_khz=") : Num(cycles / (dt / 1000))
+  Say(" fast=") : Num(CocoFast)
+  ; the share of wall time the emulation needed: under 100 it keeps up with a real CoCo 3
+  Say(" busy_pct=") : Num((run / (dt / 1000)) / 10)
+  Say(" pc=") : Num(CocoCpuPc())
+  Say(" video_fps_x10=") : Num(((VideoFrames - CocoStatVideo) * 10000) / (dt / 1000))
+  Say(" rows_sent=") : Num(VideoRowsSent)
+  Say(" keys=") : Num(KeyTyped) : Say(" queued=") : Num(KeyPending())
+  Say(" sound_samples=") : Num(SoundSamples) : CocoAudioReport()
+  Say(" late=") : Num(CocoLate)
+  Eol()
+  CocoStatAt = now : CocoStatFrames = CocoFrames : CocoStatCycles = CpuCycles
+  CocoStatRun = CocoRunUs : CocoStatVideo = VideoFrames
+EndProcedure
+
+; ---------------------------------------------------------------- input from the host
+
+Procedure CocoMonitorCommand(c.i)
+  Select c
+    Case 115                             ; s
+      CocoStatus(Micros())
+    Case 116                             ; t
+      CocoTextDump()
+    Case 102                             ; f
+      CocoFullSpeed = CocoFullSpeed ! 1
+      Say("COCO full_speed=") : Num(CocoFullSpeed) : Eol()
+    Case 118                             ; v
+      CocoReport = CocoReport ! 1
+    Case 99                              ; c
+      CocoCapture()
+    Case 112                             ; p
+      CocoCpuReport()
+    Case 107                             ; k
+      Say("KEYS typed=") : Num(KeyTyped) : Say(" head=") : Num(KeyHead) : Say(" tail=") : Num(KeyTail)
+      Say(" state=") : Num(KeyState) : Say(" dropped=") : Num(KeyDropped) : Say(" matrix=")
+      For CocoMonI = 0 To 7 : Num(CocoKeys(CocoMonI)) : Say(",") : Next
+      Say(" pia0_ddrb=") : Num(PiaDdrB(0)) : Say(" pia0_outb=") : Num(PiaOutB(0)) : Say(" pia0_cra=") : Num(PiaCrA(0))
+      Say(" rows=") : Num(Pia0InputA()) : Eol()
+    Case 114                             ; r
+      CocoReset() : CocoCpuReset() : CocoBoardSetup()
+      Say("COCO reset") : Eol()
+  EndSelect
+EndProcedure
+
+Global CocoHostByte.i
+Procedure CocoHostInput()
+  While UsbSerialAvailable()
+    CocoHostByte = UsbSerialRead()
+    If CocoHostByte < 0 : Break : EndIf
+    If CocoMonitor
+      CocoMonitor = 0 : CocoMonitorCommand(CocoHostByte)
+    ElseIf CocoHostByte = $1D
+      CocoMonitor = 1
+    Else
+      KeyPut(CocoHostByte)
+    EndIf
+  Wend
+EndProcedure
+
+; ---------------------------------------------------------------- the loop
+
+; Run the machine for ever. A frame of the real machine is 262 x 1824 GIME clocks = 16688.2 us.
+; Like CocoFrame, the path down to CpuRun keeps no locals (PM1126): its state is in Globals.
+Global RunDue.i, RunDueFrac.i, RunNow.i, RunStart.i, RunReport.i
+Procedure CocoRun()
+  CocoReset() : CocoCpuReset() : CocoBoardSetup()
+  SoundStart()
+  RunDue = Micros() : RunDueFrac = 0
+  RunReport = Micros() : CocoStatAt = RunReport
+  Repeat
+    RunStart = Micros()
+    CocoFrame()
+    CocoRunUs = CocoRunUs + Micros() - RunStart
+    KeyFrame()
+    CocoFrameHook()
+    CocoHostInput()
+    ; pacing
+    RunDue = RunDue + 16688 : RunDueFrac = RunDueFrac + 2
+    If RunDueFrac >= 10 : RunDueFrac = RunDueFrac - 10 : RunDue = RunDue + 1 : EndIf
+    RunNow = Micros()
+    If CocoFullSpeed
+      RunDue = RunNow
+    ElseIf RunNow - RunDue > 100000
+      CocoLate = CocoLate + 1 : RunDue = RunNow
+    Else
+      While Micros() - RunDue < 0
+        CocoBoardService()
+      Wend
+    EndIf
+    If CocoReport And RunNow - RunReport >= 5000000
+      CocoStatus(RunNow) : RunReport = RunNow
+    EndIf
+  ForEver
+EndProcedure
+
+Procedure CocoLineHook()
+  If (CocoLine & 15) = 0
+    CocoBoardService()
+  EndIf
+EndProcedure
+
+Procedure CocoPutc(c.i)
+  UsbSerialWrite(c)
+EndProcedure

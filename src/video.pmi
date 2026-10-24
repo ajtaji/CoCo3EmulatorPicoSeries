@@ -22,6 +22,7 @@
 #VIDEO_OUT_H = 320
 
 Global Dim VideoColor.u(64)              ; GIME colour (6 bits) -> RGB565
+Global Dim VideoColorRgb.l(64)           ; GIME colour (6 bits) -> 0xRRGGBB
 Global Dim VideoPal.u(17)                ; palette registers resolved, 16 = border
 Global Dim VideoSamples.a(640)           ; one line, as palette indices
 Global Dim VideoOut.u(480)               ; one output row
@@ -48,6 +49,7 @@ Procedure VideoInit()
       r = (t >> 16) & 255 : g = (t >> 8) & 255 : b = t & 255
     CompilerEndIf
     VideoColor(c) = ((r & $F8) << 8) | ((g & $FC) << 3) | (b >> 3)
+    VideoColorRgb(c) = (r << 16) | (g << 8) | b
   Next
   For i = 0 To 479 : VideoMap(i) = (i * 4) / 3 : Next
   For i = 0 To 239
@@ -166,9 +168,9 @@ EndProcedure
 
 ; GIME text: VdBytes characters, 8 dots each, VdScale samples per dot.
 Procedure VideoGimeText(addr.i, offset.i, row.i)
-  Protected i.i, ch.i, attr.i, fg.i, bg.i, glyph.i, bit.i, x.i, s.i, step.i, under.i, c.i
+  Protected i.i, ch.i, attr.i, fg.i, bg.i, glyph.i, bit.i, x.i, s.i, stride.i, under.i, c.i
   x = VdLeft
-  step = 1 + VdAttr
+  stride = 1 + VdAttr
   under = -1
   If VdAttr
     Select Gime(8) & 7
@@ -179,9 +181,9 @@ Procedure VideoGimeText(addr.i, offset.i, row.i)
     EndSelect
   EndIf
   For i = 0 To VdBytes - 1
-    ch = PeekA(CocoPhys(addr + ((offset + i * step) & $FF)))
+    ch = PeekA(CocoPhys(addr + ((offset + i * stride) & $FF)))
     If VdAttr
-      attr = PeekA(CocoPhys(addr + ((offset + i * step + 1) & $FF)))
+      attr = PeekA(CocoPhys(addr + ((offset + i * stride + 1) & $FF)))
       If (attr & $80) And GimeBlink
         ch = $20 : attr = attr & $BF
       EndIf
@@ -266,13 +268,17 @@ Procedure.i VideoLegacyBorder()
   ProcedureReturn 0
 EndProcedure
 
-; Render source line `line` (0-239) into VideoOut. Returns the line's hash.
-Procedure.l VideoRenderLine(line.i)
-  Protected b.i, rowIndex.i, row.i, addr.i, x.i, sum.l, i.i, offset.i, border.i
+; Render source line `line` (0-239) into VideoSamples (640 palette indices, 16 = border) with VideoPal
+; (the 17 colours, RGB565) and VideoRgb (the same, as 0xRRGGBB for a PC).
+Global Dim VideoRgb.l(17)
+Procedure VideoRenderSamples(line.i)
+  Protected b.i, rowIndex.i, row.i, addr.i, x.i, i.i, offset.i, border.i, c.i
   VideoDecode()
   If VdLegacy : border = VideoLegacyBorder() : Else : border = Gime($A) & $3F : EndIf
-  For i = 0 To 15 : VideoPal(i) = VideoColor(GimePal(i)) : Next
-  VideoPal(16) = VideoColor(border)
+  For i = 0 To 15
+    VideoPal(i) = VideoColor(GimePal(i)) : VideoRgb(i) = VideoColorRgb(GimePal(i))
+  Next
+  VideoPal(16) = VideoColor(border) : VideoRgb(16) = VideoColorRgb(border)
   b = line - VdBodyTop
   If b < 0 Or b >= VdBodyLines
     VideoBorderLine(16)
@@ -293,6 +299,12 @@ Procedure.l VideoRenderLine(line.i)
       If VdText : VideoGimeText(addr, offset, row) : Else : VideoGraphics(addr, offset, 0) : EndIf
     EndIf
   EndIf
+EndProcedure
+
+; Render source line `line` into VideoOut (480 RGB565 pixels for the panel). Returns the line's hash.
+Procedure.l VideoRenderLine(line.i)
+  Protected x.i, sum.l
+  VideoRenderSamples(line)
   sum = 0
   For x = 0 To 479
     VideoOut(x) = VideoPal(VideoSamples(VideoMap(x)))

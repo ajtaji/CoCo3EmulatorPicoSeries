@@ -11,7 +11,8 @@
 ; Sources: MAME src/mame/trs/gime.cpp, coco3.cpp, coco.cpp (BSD-3-Clause; read, not copied), the
 ; CoCo 3 service manual's register descriptions. Downloaded copies: C:\PMFBuild\coco3-reference.
 
-#COCO_RAM_PAGES = 16                     ; 8 KB pages: 128 KB. The MMU's 6-bit page number is taken modulo this.
+; The wrapper sets #COCO_RAM_PAGES (8 KB pages: 16 = 128 KB, 64 = 512 KB; the MMU's 6-bit page number is
+; taken modulo it) and #COCO_RAM_LAYOUT (0: one array per page, for a Pico's fragmented SRAM; 1: one array).
 #COCO_RAM_BYTES = #COCO_RAM_PAGES * 8192
 
 ; The GIME's master clock is 28.636363 MHz. Time on this machine is counted in those clocks.
@@ -29,26 +30,30 @@
 #GIRQ_EI1 = $02
 #GIRQ_EI0 = $01
 
+CompilerIf #COCO_RAM_LAYOUT = 0
 ; The RAM is sixteen 8 KB arrays, one per page, not one 128 KB array: on the Pico W no run of SRAM
 ; that long is left once the 6809 core's code (about 85 KB, in SRAM for speed), the USB library's fixed
 ; buffers at $20030000 and the stacks are placed, and pages can fill the holes between them.
 ; CocoPageBase(page) is where each page lives.
-Global Dim CocoRam0.a(8192)
-Global Dim CocoRam1.a(8192)
-Global Dim CocoRam2.a(8192)
-Global Dim CocoRam3.a(8192)
-Global Dim CocoRam4.a(8192)
-Global Dim CocoRam5.a(8192)
-Global Dim CocoRam6.a(8192)
-Global Dim CocoRam7.a(8192)
-Global Dim CocoRam8.a(8192)
-Global Dim CocoRam9.a(8192)
-Global Dim CocoRam10.a(8192)
-Global Dim CocoRam11.a(8192)
-Global Dim CocoRam12.a(8192)
-Global Dim CocoRam13.a(8192)
-Global Dim CocoRam14.a(8192)
-Global Dim CocoRam15.a(8192)
+  Global Dim CocoRam0.a(8192)
+  Global Dim CocoRam1.a(8192)
+  Global Dim CocoRam2.a(8192)
+  Global Dim CocoRam3.a(8192)
+  Global Dim CocoRam4.a(8192)
+  Global Dim CocoRam5.a(8192)
+  Global Dim CocoRam6.a(8192)
+  Global Dim CocoRam7.a(8192)
+  Global Dim CocoRam8.a(8192)
+  Global Dim CocoRam9.a(8192)
+  Global Dim CocoRam10.a(8192)
+  Global Dim CocoRam11.a(8192)
+  Global Dim CocoRam12.a(8192)
+  Global Dim CocoRam13.a(8192)
+  Global Dim CocoRam14.a(8192)
+  Global Dim CocoRam15.a(8192)
+CompilerElse
+  Global Dim CocoRamFlat.a(#COCO_RAM_BYTES)
+CompilerEndIf
 Global Dim CocoPageBase.i(#COCO_RAM_PAGES)
 Global CocoFeRead.i                      ; $FE00-$FEFF as mapped now (for the monitor)
 Global CocoRom.i                         ; the 32 KB internal ROM (address in flash or SRAM), 0 = none
@@ -162,22 +167,27 @@ Procedure.i CocoPhys(addr.i)
 EndProcedure
 
 Procedure CocoRamInit()
-  CocoPageBase(0) = @CocoRam0(0)
-  CocoPageBase(1) = @CocoRam1(0)
-  CocoPageBase(2) = @CocoRam2(0)
-  CocoPageBase(3) = @CocoRam3(0)
-  CocoPageBase(4) = @CocoRam4(0)
-  CocoPageBase(5) = @CocoRam5(0)
-  CocoPageBase(6) = @CocoRam6(0)
-  CocoPageBase(7) = @CocoRam7(0)
-  CocoPageBase(8) = @CocoRam8(0)
-  CocoPageBase(9) = @CocoRam9(0)
-  CocoPageBase(10) = @CocoRam10(0)
-  CocoPageBase(11) = @CocoRam11(0)
-  CocoPageBase(12) = @CocoRam12(0)
-  CocoPageBase(13) = @CocoRam13(0)
-  CocoPageBase(14) = @CocoRam14(0)
-  CocoPageBase(15) = @CocoRam15(0)
+  Protected i.i
+  CompilerIf #COCO_RAM_LAYOUT = 0
+    CocoPageBase(0) = @CocoRam0(0)
+    CocoPageBase(1) = @CocoRam1(0)
+    CocoPageBase(2) = @CocoRam2(0)
+    CocoPageBase(3) = @CocoRam3(0)
+    CocoPageBase(4) = @CocoRam4(0)
+    CocoPageBase(5) = @CocoRam5(0)
+    CocoPageBase(6) = @CocoRam6(0)
+    CocoPageBase(7) = @CocoRam7(0)
+    CocoPageBase(8) = @CocoRam8(0)
+    CocoPageBase(9) = @CocoRam9(0)
+    CocoPageBase(10) = @CocoRam10(0)
+    CocoPageBase(11) = @CocoRam11(0)
+    CocoPageBase(12) = @CocoRam12(0)
+    CocoPageBase(13) = @CocoRam13(0)
+    CocoPageBase(14) = @CocoRam14(0)
+    CocoPageBase(15) = @CocoRam15(0)
+  CompilerElse
+    For i = 0 To #COCO_RAM_PAGES - 1 : CocoPageBase(i) = @CocoRamFlat(0) + i * 8192 : Next
+  CompilerEndIf
 EndProcedure
 
 ; ---------------------------------------------------------------- interrupts

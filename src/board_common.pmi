@@ -7,7 +7,7 @@ Declare.i CocoLaunchCore1()
 
 Global Core1ParkRequest.i, Core1Parked.i, WorkerReady.i
 
-Procedure Say(*text.i)
+Procedure Say(*text)
   Protected p.i, c.i
   p = *text
   c = PeekA(p) & 255
@@ -84,6 +84,17 @@ Procedure Core1Main()
     If PeekL(@Core1ParkRequest) : Core1Park() : EndIf
     VideoFrame()
   ForEver
+EndProcedure
+
+; A disk sector written: read the flash sector around it, patch, erase, program (disk.pmi's DiskStore).
+Global Dim DiskSectorBuf.a(4096)
+Procedure.i DiskStore(d.i, off.i, src.i)
+  Protected flashOff.i, sect.i, i.i
+  flashOff = DiskFlash(d) + off
+  sect = flashOff & ~$FFF
+  For i = 0 To 4095 : DiskSectorBuf(i) = PeekA($10000000 + sect + i) : Next
+  For i = 0 To 255 : DiskSectorBuf((flashOff & $FFF) + i) = PeekA(src + i) : Next
+  ProcedureReturn CocoFlashSector(sect, @DiskSectorBuf(0))
 EndProcedure
 
 ; Erase one 4 KB flash sector and program it from SRAM, with core 1 parked off the flash. Only the disk
