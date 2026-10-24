@@ -42,6 +42,7 @@ The keyboard is the PC's, over the board's USB serial port: `py -3 tools/console
 |---|---|---|---|
 | Pico W | below $50000 | $140000-$14FFFF | $150000-$1EFFFF (4 x $28000) |
 | Pico 2 W | below $50000 | $3E0000-$3EFFFF | $300000-$39FFFF (overlaps a PDP-11 RK0 pack at $240000-$3FFFFF: not both) |
+| Feather RP2350 HSTX (`coco3_feather.pico2w`) | below $40000 | $4A2000-$4BFFFF | one slot, $6B5000-$6DCFFF (of $6B5000-$6FFFFF), between the PDP-11 packs |
 
 On the Pico W these stay clear of the NES ROM store, the radio firmware, the C64 emulator's region ($1F0000)
 and the Bluetooth link key that other
@@ -79,6 +80,9 @@ status line read over USB by `tools/board.py`; the scripts are in `tests/`.
 
   Paced is the default: the machine runs at exactly the real machine's rate. The unthrottled rate at
   0.89 MHz is lower in kHz because the machine's per-scanline work is the same at both speeds.
+- **RP2350**: the same tests on an Adafruit Feather RP2350 HSTX (the Pico 2 W build, 150 MHz, no panel - the
+  picture read over USB): BASIC boots and runs the program, the TIMER loop counts **910** as on the Pico W and the
+  PC, and the demo LOADMs from its flash disk and runs; at 0.89 MHz the machine uses 23% of core 0.
 - Disk: on a blank disk in flash a typed program is SAVEd, wiped, LOADed and RUN (`tests/disk.txt`); after
   a reflash and cold boot `DIR` still lists it and it LOADs and RUNs (`tests/disk_persist.txt`).
 
