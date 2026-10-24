@@ -1,0 +1,12 @@
+# BASIC counts its own loop for 600 TIMER ticks (10 emulated seconds) at 0.89 MHz: the Pico and the PC
+# (desktop/CoCo3.exe --log 2400 --type-file tests/timer.bas) run the same machine code and should agree.
+expect 15 CoCo 3 ROM loaded
+screen 20 \r\nOK +\r\n
+line 10 TIMER=0:A=0
+wait 1
+line 20 A=A+1:IF TIMER<600 THEN 20
+wait 1
+line 30 PRINT "LOOPS IN 600 TICKS";A
+wait 1
+line RUN
+screen 20 LOOPS IN 600 TICKS +[0-9]+

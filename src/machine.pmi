@@ -84,6 +84,7 @@ Global Dim PiaCrB.a(2)
 
 ; Keyboard: CocoKeys(column) holds the rows (PIA0 PA0-PA6) pressed in that column (PIA0 PB0-PB7).
 Global Dim CocoKeys.a(8)
+Global KeyColumn.i, KeyScans.i              ; (keyboard.pmi's) the typed key's column, the scans that saw it
 Global CocoButtons.i                     ; joystick fire buttons: bit 0 right 1, bit 1 left 1 (pull PA0/PA1 low)
 Global Dim CocoJoy.a(4)                  ; 0-63: right X, right Y, left X, left Y
 Global CocoDac.i                         ; the 6-bit DAC, PIA1 PA2-PA7
@@ -282,6 +283,8 @@ Procedure.i Pia0InputA()
       rows = rows | CocoKeys(c)
     EndIf
   Next
+  ; the typed key's column strobed: the program is looking at it (keyboard.pmi holds it until seen)
+  If KeyColumn And (cols & KeyColumn) = 0 : KeyScans = KeyScans + 1 : EndIf
   rows = (~(rows | CocoButtons)) & $7F
   ; comparator: the selected joystick axis against the DAC (MAME: joystick value >= dac)
   mux = Bool(PiaCrA(0) & $08) | (Bool(PiaCrB(0) & $08) << 1)

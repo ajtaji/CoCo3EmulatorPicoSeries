@@ -1,8 +1,10 @@
 ; The CoCo 3 keyboard, typed from the PC over USB serial.
 ;
-; Each byte from the host is one key: it is pressed (with SHIFT where the character needs it) for
-; #KEY_HOLD_FRAMES frames, released for #KEY_GAP_FRAMES, then the next byte is taken. BASIC scans
-; the matrix in software and debounces, so a key must stay down for a few of its scans.
+; Each byte from the host is one key: it is pressed (with SHIFT where the character needs it) for at
+; least #KEY_HOLD_FRAMES frames AND until the program has scanned its column #KEY_SCANS times (at most
+; #KEY_MAX_FRAMES), released for #KEY_GAP_FRAMES, then the next byte is taken. BASIC scans the matrix
+; in software and debounces; while it is busy (inserting a program line, printing) it does not scan,
+; and a key held for a fixed time was lost then.
 ;
 ; Bytes: printable ASCII as on the CoCo keyboard (letters of either case are the unshifted key);
 ; 13 or 10 ENTER; 8 or 127 the left arrow; 27 or 3 BREAK; 12 CLEAR; 9 the right arrow.
@@ -18,11 +20,14 @@
 
 #KEY_HOLD_FRAMES = 3
 #KEY_GAP_FRAMES = 2
+#KEY_SCANS = 3
+#KEY_MAX_FRAMES = 30
 #KEY_QUEUE = 256
 
 Global Dim KeyQueue.a(#KEY_QUEUE)
 Global KeyHead.i, KeyTail.i, KeyState.i, KeyUntil.i, KeyHeld.i, KeyShift.i, KeyMods.i
 Global KeyDropped.i, KeyTyped.i
+Global KeyStart.i                       ; when the held key went down (KeyColumn, KeyScans: machine.pmi)
 
 ; Queue a byte from the host. Returns 0 when the queue is full (the byte is dropped and counted).
 Procedure.i KeyPut(c.i)
@@ -73,9 +78,11 @@ EndDataSection
 Procedure KeyRelease()
   Protected i.i
   For i = 0 To 7 : CocoKeys(i) = 0 : Next
+  KeyColumn = 0
 EndProcedure
 
 Procedure KeyPress(code.i)
+  KeyColumn = 1 << (code & 7) : KeyScans = 0 : KeyStart = CocoFrames
   CocoKeys(code & 7) = CocoKeys(code & 7) | (1 << ((code >> 4) & 7))
   If code & $100 : CocoKeys(7) = CocoKeys(7) | $40 : EndIf
   If KeyMods & 1 : CocoKeys(3) = CocoKeys(3) | $40 : EndIf   ; ALT
@@ -88,7 +95,7 @@ EndProcedure
 Procedure KeyFrame()
   Protected c.i, code.i
   If KeyState = 1
-    If CocoFrames - KeyUntil >= 0
+    If CocoFrames - KeyUntil >= 0 And (KeyScans >= #KEY_SCANS Or CocoFrames - KeyStart >= #KEY_MAX_FRAMES)
       KeyRelease() : KeyMods = 0
       KeyState = 2 : KeyUntil = CocoFrames + #KEY_GAP_FRAMES
     EndIf

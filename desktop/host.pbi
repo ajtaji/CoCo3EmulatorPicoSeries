@@ -136,36 +136,49 @@ Procedure.i HostSoundOpen()
   ProcedureReturn 1
 EndProcedure
 
-; Hand the device every whole buffer of new samples the machine has made (called once a frame).
-Procedure HostSoundPump()
-  Protected i.i, k.i, *b, pending.i
-  If HostSndOpen = 0 : HostSndRead = SoundSamples : ProcedureReturn : EndIf
-  If SoundSamples - HostSndRead > #SOUND_RING - #HOST_SND_SAMPLES : HostSndRead = SoundSamples - #HOST_SND_SAMPLES : EndIf
-  While SoundSamples - HostSndRead >= #HOST_SND_SAMPLES
-    pending = 0
-    For i = 0 To #HOST_SND_BUFFERS - 1
-      If (HostSndHeader(i)\dwFlags & #WHDR_DONE) = 0 : pending + 1 : EndIf
-    Next
-    For i = 0 To #HOST_SND_BUFFERS - 1
-      If HostSndHeader(i)\dwFlags & #WHDR_DONE
-        If pending = 0 : HostSndUnderruns + 1 : EndIf
-        *b = *HostSndBuf(i)
-        For k = 0 To #HOST_SND_SAMPLES - 1
-          If HostSndMuted
-            PokeW(*b + k * 2, 0)
-          Else
-            PokeW(*b + k * 2, SoundRing((HostSndRead + k) & (#SOUND_RING - 1)))
-          EndIf
-        Next
-        HostSndHeader(i)\dwFlags & ~#WHDR_DONE
-        waveOutWrite_(HostSndDevice, @HostSndHeader(i), SizeOf(WAVEHDR))
-        Break
-      EndIf
-    Next
-    HostSndRead + #HOST_SND_SAMPLES        ; (dropped when all buffers are queued: the PC is ahead)
+; The sound thread: hands the device each whole buffer of new samples as the machine makes them. waveOut
+; calls block for milliseconds at a time (24 ms a window pass, measured), so they are kept off the thread
+; that runs the machine and draws the window.
+Global HostSndThread.i, HostSndQuit.i
+Procedure HostSoundThread(*unused)
+  Protected i.i, k.i, *b, pending.i, wrote.i
+  While HostSndQuit = 0
+    wrote = 0
+    If SoundSamples - HostSndRead > #SOUND_RING - #HOST_SND_SAMPLES : HostSndRead = SoundSamples - #HOST_SND_SAMPLES : EndIf
+    If SoundSamples - HostSndRead >= #HOST_SND_SAMPLES
+      pending = 0
+      For i = 0 To #HOST_SND_BUFFERS - 1
+        If (HostSndHeader(i)\dwFlags & #WHDR_DONE) = 0 : pending + 1 : EndIf
+      Next
+      For i = 0 To #HOST_SND_BUFFERS - 1
+        If HostSndHeader(i)\dwFlags & #WHDR_DONE
+          If pending = 0 : HostSndUnderruns + 1 : EndIf
+          *b = *HostSndBuf(i)
+          For k = 0 To #HOST_SND_SAMPLES - 1
+            If HostSndMuted
+              PokeW(*b + k * 2, 0)
+            Else
+              PokeW(*b + k * 2, SoundRing((HostSndRead + k) & (#SOUND_RING - 1)))
+            EndIf
+          Next
+          HostSndHeader(i)\dwFlags & ~#WHDR_DONE
+          waveOutWrite_(HostSndDevice, @HostSndHeader(i), SizeOf(WAVEHDR))
+          wrote = 1
+          Break
+        EndIf
+      Next
+      HostSndRead + #HOST_SND_SAMPLES        ; (dropped when every buffer is queued: the machine is ahead)
+    EndIf
+    If wrote = 0 : Delay(2) : EndIf
   Wend
 EndProcedure
 
+Procedure HostSoundPump()
+  If HostSndOpen And HostSndThread = 0 : HostSndThread = CreateThread(@HostSoundThread(), 0) : EndIf
+  If HostSndOpen = 0 : HostSndRead = SoundSamples : EndIf
+EndProcedure
+
 Procedure HostSoundClose()
+  If HostSndThread : HostSndQuit = 1 : WaitThread(HostSndThread, 1000) : HostSndThread = 0 : EndIf
   If HostSndOpen : waveOutReset_(HostSndDevice) : waveOutClose_(HostSndDevice) : HostSndOpen = 0 : EndIf
 EndProcedure

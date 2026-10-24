@@ -48,7 +48,10 @@ CompilerIf #COCO_CPU = 1
   CompilerIf Not Defined(COCO_CPU_DIR$, #PB_Constant)
     #COCO_CPU_DIR$ = #PB_Compiler_FilePath + "../../6809EmulatorPicoSeries/desktop/"
   CompilerEndIf
+  #CPU_TIMING = 1                        ; CpuRun's budget is E cycles
+  #CPU_ASM_TAIL = 0
   XIncludeFile #COCO_CPU_DIR$ + "cpu6809.pbi"
+  XIncludeFile #COCO_CPU_DIR$ + "disasm6809.pbi"
   XIncludeFile "../src/cpu6809_glue.pmi"
 CompilerElse
   XIncludeFile "../src/cpu_none.pmi"
@@ -62,10 +65,12 @@ XIncludeFile "../src/coco3.pmi"
 XIncludeFile "host.pbi"
 
 #SCR_W = 640
-#SCR_H = 480                             ; 240 lines, each shown twice (4:3)
+#SCR_H = 480                             ; shown 640 x 480 (4:3): 240 lines, each drawn twice by the GPU
+#TEX_H = 240
 #FRAME_US = 16688                        ; 262 x 1824 GIME clocks at 28.636363 MHz
 
-Global Dim ScrPix.l(#SCR_W * #SCR_H)     ; RGBA, bottom row first (as the engine samples it)
+Global Dim ScrPix.l(#SCR_W * #TEX_H)     ; RGBA, bottom row first (as the engine samples it)
+Global ScrDirty.i = 1
 Global EmuRunning.i = 1, EmuFull.i, EmuFrames.q, EmuStop$
 Global SpeedMark.q, SpeedCycles.q, SpeedFrames.q, SpeedKhz.f, SpeedFps.f, SpeedX.f
 Global TypeText$, TypeAt.i = 240
@@ -73,17 +78,18 @@ Global TypeText$, TypeAt.i = 240
 Procedure.s H2(v.i) : ProcedureReturn RSet(Hex(v & $FF), 2, "0") : EndProcedure
 Procedure.s H4(v.i) : ProcedureReturn RSet(Hex(v & $FFFF), 4, "0") : EndProcedure
 
-; The 240 lines of the picture into ScrPix (each line twice).
+; The 240 lines of the picture into ScrPix.
 Procedure ScreenRender()
-  Protected line.i, x.i, c.l, *row, *row2
+  Protected line.i, x.i, c.l, *p.Long, i.i
+  Protected Dim lut.l(16)
   For line = 0 To 239
     VideoRenderSamples(line)
-    *row = @ScrPix((#SCR_H - 1 - line * 2) * #SCR_W)
-    *row2 = *row - #SCR_W * 4
+    For i = 0 To 16
+      c = VideoRgb(i) : lut(i) = $FF000000 | ((c & $FF) << 16) | (c & $FF00) | ((c >> 16) & $FF)
+    Next
+    *p = @ScrPix((#TEX_H - 1 - line) * #SCR_W)
     For x = 0 To 639
-      c = VideoRgb(VideoSamples(x))
-      c = $FF000000 | ((c & $FF) << 16) | (c & $FF00) | ((c >> 16) & $FF)
-      PokeL(*row + x * 4, c) : PokeL(*row2 + x * 4, c)
+      *p\l = lut(VideoSamples(x)) : *p + 4
     Next
   Next
 EndProcedure
@@ -95,19 +101,42 @@ Procedure TypeFeed()
   For i = 1 To Len(TypeText$)
     c = Asc(Mid(TypeText$, i, 1))
     If c = '\' And Mid(TypeText$, i + 1, 1) = "n" : c = 13 : i + 1 : EndIf
+    If c = '\' And Mid(TypeText$, i + 1, 1) = "q" : c = 34 : i + 1 : EndIf    ; a quote (a command line drops real ones)
     KeyPut(c)
   Next
   TypeText$ = ""
 EndProcedure
 
+Global EmuCpuUs.q, EmuSndUs.q
+Declare.q MicroNow()
 Procedure EmuFrame()
+  Protected t.q = MicroNow()
   CocoFrame()
+  ScrDirty = 1
+  EmuCpuUs + MicroNow() - t
   KeyFrame()
   EmuFrames + 1
   TypeFeed()
+  t = MicroNow()
   HostSoundPump()
+  EmuSndUs + MicroNow() - t
   CompilerIf #COCO_CPU = 1
     If CpuStopped And EmuStop$ = "" : EmuStop$ = "6809 stopped: opcode $" + Hex(CpuBadOpcode) + " at $" + H4(CpuPC) : EndIf
+  CompilerEndIf
+EndProcedure
+
+; One instruction, at the machine's time (paused only).
+Procedure EmuStep()
+  CompilerIf #COCO_CPU = 1
+    Protected used.i
+    CocoFolded = 0
+    used = CocoCpuRun(1)
+    CocoLinePos = CocoLinePos + (used - CocoFolded) * CocoCycleClocks : CocoFolded = 0
+    If CocoLinePos >= #GIME_LINE_CLOCKS
+      CocoLinePos = CocoLinePos - #GIME_LINE_CLOCKS : CocoEndLine() : SoundCatchUp(GimeNow)
+      If CocoLine = 0 : KeyFrame() : EmuFrames + 1 : EndIf
+    EndIf
+    ScrDirty = 1
   CompilerEndIf
 EndProcedure
 
@@ -144,8 +173,11 @@ Procedure ConsoleRun(frames.i)
     If EmuStop$ <> "" : PrintN(EmuStop$) : Break : EndIf
   Next
   PrintN("done: " + Str(EmuFrames) + " frames in " + Str(ElapsedMilliseconds() - t0) + " ms unpaced, " +
-         StrF(CpuCycles / 1000.0 / (ElapsedMilliseconds() - t0 + 1), 0) + " kHz = " +
-         StrF(CpuCycles / 894.886 / (ElapsedMilliseconds() - t0 + 1), 2) + "x a real CoCo 3 at 0.89 MHz")
+         StrF(CpuCycles / 1000.0 / (ElapsedMilliseconds() - t0 + 1), 1) + " MHz of 6809 cycles = " +
+         StrF(CpuCycles / 894.886 / (ElapsedMilliseconds() - t0 + 1), 1) + "x a real CoCo 3 at 0.89 MHz")
+  PrintN("keyboard: typed " + Str(KeyTyped) + " queued " + Str(KeyPending()) + " state " + Str(KeyState) + " scans " + Str(KeyScans) +
+         " held for " + Str(CocoFrames - KeyStart) + " frames; matrix " + Str(CocoKeys(0)) + "," + Str(CocoKeys(1)) + "," + Str(CocoKeys(2)) + "," + Str(CocoKeys(7)) +
+         "; cpu pc $" + H4(CocoCpuPc()) + " wait " + Str(CpuWaiting) + " sync " + Str(CpuSyncing) + " stopped " + Str(CpuStopped))
   CocoTextDump()
 EndProcedure
 
@@ -154,6 +186,7 @@ EndProcedure
 Global Win.i, Gl.i, UiScale.f, ScreenTex.l, ScreenSprite.GLSprite
 Global MouseDown.b, Wheel.i, KeyCode.i, KeyChar.i, PhysW.i, PhysH.i, RightTab.i, MemTop.i
 Global ShotPath$, ShotFrames.i, GetDpiForWindow_.i, QpcFreq.q
+Global Dim PartUs.q(7), Dim PartShown.f(7), PartLoops.q, ShowTiming.i
 
 Procedure.q MicroNow()
   Protected c.q
@@ -194,17 +227,19 @@ Procedure ScreenTextureInit()
   glGenTextures_(1, @ScreenTex)
   glBindTexture_(#GL_TEXTURE_2D, ScreenTex)
   glTexParameteri_(#GL_TEXTURE_2D, #GL_TEXTURE_MIN_FILTER, #GL_LINEAR)
-  glTexParameteri_(#GL_TEXTURE_2D, #GL_TEXTURE_MAG_FILTER, #GL_NEAREST)
+  glTexParameteri_(#GL_TEXTURE_2D, #GL_TEXTURE_MAG_FILTER, #GL_LINEAR)
   glTexParameteri_(#GL_TEXTURE_2D, #GL_TEXTURE_WRAP_S, #GL_CLAMP_TO_EDGE)
   glTexParameteri_(#GL_TEXTURE_2D, #GL_TEXTURE_WRAP_T, #GL_CLAMP_TO_EDGE)
-  glTexImage2D_(#GL_TEXTURE_2D, 0, #GL_RGBA, #SCR_W, #SCR_H, 0, #GL_RGBA, #GL_UNSIGNED_BYTE, @ScrPix(0))
+  glTexImage2D_(#GL_TEXTURE_2D, 0, #GL_RGBA, #SCR_W, #TEX_H, 0, #GL_RGBA, #GL_UNSIGNED_BYTE, @ScrPix(0))
   ScreenSprite\TextureID = ScreenTex : ScreenSprite\Width = #SCR_W : ScreenSprite\Height = #SCR_H
 EndProcedure
 
 Procedure ScreenTextureUpload()
+  If ScrDirty = 0 : ProcedureReturn : EndIf
+  ScrDirty = 0
   ScreenRender()
   glBindTexture_(#GL_TEXTURE_2D, ScreenTex)
-  glTexSubImage2D_(#GL_TEXTURE_2D, 0, 0, 0, #SCR_W, #SCR_H, #GL_RGBA, #GL_UNSIGNED_BYTE, @ScrPix(0))
+  glTexSubImage2D_(#GL_TEXTURE_2D, 0, 0, 0, #SCR_W, #TEX_H, #GL_RGBA, #GL_UNSIGNED_BYTE, @ScrPix(0))
 EndProcedure
 
 Procedure.s CCFlags(cc.i)
@@ -262,6 +297,25 @@ Procedure DrawMemory(x.f, y.f, w.f, h.f)
   Next
 EndProcedure
 
+Procedure DrawDisassembly(x.f, y.f, w.f, h.f)
+  Protected s.f = UiScale, lh.f = GLFontLineHeight(*Neon_FontMono) + 2 * s, ty.f = y + 6 * s, rows.i, r.i, a.i, t$, k.i, b$, n.i
+  rows = (h - 12 * s) / lh
+  CompilerIf #COCO_CPU = 1
+    a = CpuPC
+    For r = 0 To rows - 1
+      If a >= $FF00 Or CpuRdMap((a >> 8) & 255) = 0
+        Neon_Text(*Neon_FontMono, x + 14 * s, ty, H4(a) + "  (I/O page: not read)", Neon_C_DimR, Neon_C_DimG, Neon_C_DimB)
+        Break
+      EndIf
+      t$ = CpuDisasm(a) : n = CpuDisasmLen : If n < 1 : n = 1 : EndIf
+      b$ = "" : For k = 0 To n - 1 : b$ + H2(CpuPeek(a + k)) : Next
+      If r = 0 : Neon_Box(x + 2, ty - 1 * s, w - 4, lh, 0.20, 0.22, 0.26) : EndIf
+      Neon_Text(*Neon_FontMono, x + 14 * s, ty, H4(a) + "  " + LSet(b$, 10) + t$, Neon_C_TextR, Neon_C_TextG, Neon_C_TextB)
+      ty + lh : a = (a + n) & $FFFF
+    Next
+  CompilerEndIf
+EndProcedure
+
 Procedure DrawLog(x.f, y.f, w.f, h.f)
   Protected s.f = UiScale, lh.f = GLFontLineHeight(*Neon_FontMono) + 2 * s, ty.f, n.i, i.i, rows.i
   rows = (h - 12 * s) / lh
@@ -276,12 +330,13 @@ EndProcedure
 Procedure DrawControls(x.f, y.f, w.f, h.f)
   Protected s.f = UiScale, bx.f = x + 12 * s, by.f = y + Neon_S(36), bh.f = 28 * s, d.i, p$, r$
   Neon_Panel(x, y, w, h, "Tandy Color Computer 3 - 512 KB, Disk BASIC", Neon_C_VioR, Neon_C_VioG, Neon_C_VioB, Neon_S(26))
-  If Neon_Button(bx, by, 74 * s, bh, "Run", EmuRunning, Bool(EmuRunning = 0)) : EmuRunning = 1 : EndIf : bx + 80 * s
-  If Neon_Button(bx, by, 74 * s, bh, "Pause", #False, EmuRunning) : EmuRunning = 0 : EndIf : bx + 80 * s
-  If Neon_Button(bx, by, 74 * s, bh, "Frame", #False, Bool(EmuRunning = 0)) : EmuFrame() : EndIf : bx + 80 * s
-  If Neon_Button(bx, by, 74 * s, bh, "Reset") : CocoReset() : CocoCpuReset() : EndIf : bx + 80 * s
-  If Neon_Button(bx, by, 96 * s, bh, "Full speed", EmuFull) : EmuFull ! 1 : EndIf : bx + 102 * s
-  If Neon_Button(bx, by, 74 * s, bh, "Mute", HostSndMuted) : HostSndMuted ! 1 : EndIf
+  If Neon_Button(bx, by, 64 * s, bh, "Run", EmuRunning, Bool(EmuRunning = 0)) : EmuRunning = 1 : EndIf : bx + 70 * s
+  If Neon_Button(bx, by, 64 * s, bh, "Pause", #False, EmuRunning) : EmuRunning = 0 : EndIf : bx + 70 * s
+  If Neon_Button(bx, by, 64 * s, bh, "Step", #False, Bool(EmuRunning = 0)) : EmuStep() : EndIf : bx + 70 * s
+  If Neon_Button(bx, by, 64 * s, bh, "Frame", #False, Bool(EmuRunning = 0)) : EmuFrame() : EndIf : bx + 70 * s
+  If Neon_Button(bx, by, 64 * s, bh, "Reset") : CocoReset() : CocoCpuReset() : EndIf : bx + 70 * s
+  If Neon_Button(bx, by, 88 * s, bh, "Full speed", EmuFull) : EmuFull ! 1 : EndIf : bx + 94 * s
+  If Neon_Button(bx, by, 64 * s, bh, "Mute", HostSndMuted) : HostSndMuted ! 1 : EndIf
   by + bh + 8 * s : bx = x + 12 * s
   For d = 0 To 1
     If Neon_Button(bx, by, 110 * s, bh, "Drive " + Str(d) + "...")
@@ -307,24 +362,30 @@ Procedure DrawWindow()
   ; the CoCo's screen: as large as fits the left 58 %, 4:3
   sc = (PhysW * 0.58 - 2 * margin) / #SCR_W
   If (PhysH - 2 * margin) / #SCR_H < sc : sc = (PhysH - 2 * margin) / #SCR_H : EndIf
-  If sc >= 1 : sc = Int(sc) : EndIf
+  If sc >= 2 : sc = Int(sc) : EndIf        ; whole steps once there is room, else as large as fits
   sw = #SCR_W * sc : sh = #SCR_H * sc : px = margin : py = (PhysH - sh) / 2
   Neon_Box(px - 2, py - 2, sw + 4, sh + 4, 0.15, 0.20, 0.30)
+  Protected t.q = MicroNow()
   ScreenTextureUpload()
   DrawGLSprite(@ScreenSprite, px, py, 0.0, sc, 1.0, 1.0, 1.0, 1.0, #True, -1, -1, -1, -1, #True)
+  PartUs(0) + MicroNow() - t : t = MicroNow()
   rx = px + sw + margin : rw = PhysW - rx - margin
   DrawControls(rx, margin, rw, Neon_S(170))
+  PartUs(1) + MicroNow() - t : t = MicroNow()
   y = margin + Neon_S(170) + margin
   DrawRegisters(rx, y, rw, Neon_S(250))
+  PartUs(2) + MicroNow() - t : t = MicroNow()
   y + Neon_S(250) + margin
   Neon_Panel(rx, y, rw, PhysH - y - margin, "", Neon_C_AccR, Neon_C_AccG, Neon_C_AccB)
-  RightTab = Neon_TabStrip(300, rx + 1, y + 1, rw - 2, Neon_S(28), "Log|Memory", RightTab)
-  If RightTab = 0
-    DrawLog(rx, y + Neon_S(32), rw, PhysH - y - margin - Neon_S(32))
-  Else
-    DrawMemory(rx, y + Neon_S(32), rw, PhysH - y - margin - Neon_S(32))
-  EndIf
+  RightTab = Neon_TabStrip(300, rx + 1, y + 1, rw - 2, Neon_S(28), "Disassembly|Memory|Log", RightTab)
+  Select RightTab
+    Case 0 : DrawDisassembly(rx, y + Neon_S(32), rw, PhysH - y - margin - Neon_S(32))
+    Case 1 : DrawMemory(rx, y + Neon_S(32), rw, PhysH - y - margin - Neon_S(32))
+    Default : DrawLog(rx, y + Neon_S(32), rw, PhysH - y - margin - Neon_S(32))
+  EndSelect
+  PartUs(3) + MicroNow() - t : t = MicroNow()
   Neon_ChromeEndFrame()
+  PartUs(4) + MicroNow() - t
 EndProcedure
 
 Procedure SaveWindowShot(path$)
@@ -392,6 +453,7 @@ Procedure WindowRun()
                   Select KeyCode
                     Case #PB_Shortcut_F5 : EmuRunning ! 1
                     Case #PB_Shortcut_F11 : If EmuRunning = 0 : EmuFrame() : EndIf
+                    Case #PB_Shortcut_F10 : If EmuRunning = 0 : EmuStep() : EndIf
                     Case #PB_Shortcut_F3 : CocoReset() : CocoCpuReset()
                     Case #PB_Shortcut_F8 : EmuFull ! 1
                     Case #PB_Shortcut_F9 : HostSndMuted ! 1
@@ -417,9 +479,21 @@ Procedure WindowRun()
     Else
       due = MicroNow()
     EndIf
+    PartUs(5) + MicroNow() - now
     SpeedUpdate()
+    now = MicroNow()
     DrawWindow()
-    If ShotPath$ <> "" And EmuFrames >= ShotFrames : SaveWindowShot(ShotPath$) : quit = 1 : EndIf
+    PartUs(6) + MicroNow() - now : PartLoops + 1
+    If PartLoops >= 60 And ShowTiming = 0 : For n = 0 To 7 : PartUs(n) = 0 : Next : PartLoops = 0 : EmuCpuUs = 0 : EmuSndUs = 0 : EndIf
+    If PartLoops >= 60
+      HostOut("ms per pass: screen " + StrF(PartUs(0) / 60000.0, 2) + " controls " + StrF(PartUs(1) / 60000.0, 2) + " regs " + StrF(PartUs(2) / 60000.0, 2) +
+              " tab " + StrF(PartUs(3) / 60000.0, 2) + " end " + StrF(PartUs(4) / 60000.0, 2) + " emu " + StrF(PartUs(5) / 60000.0, 2) + " (cpu " + StrF(EmuCpuUs / 60000.0, 2) + " sound " + StrF(EmuSndUs / 60000.0, 2) + ") draw " + StrF(PartUs(6) / 60000.0, 2)) : Eol()
+      For n = 0 To 7 : PartUs(n) = 0 : Next : PartLoops = 0 : EmuCpuUs = 0 : EmuSndUs = 0
+    EndIf
+    If ShotPath$ <> "" And EmuFrames >= ShotFrames
+      SaveWindowShot(ShotPath$) : quit = 1
+      If CreateFile(1, ShotPath$ + ".log") : WriteString(1, HostLog$ + StatusLine() + #LF$) : CloseFile(1) : EndIf
+    EndIf
     SetGadgetAttribute(Gl, #PB_OpenGL_FlipBuffers, #True)
     Wheel = 0 : KeyCode = 0 : KeyChar = 0
   Until quit
@@ -440,7 +514,14 @@ For i = 0 To CountProgramParameters() - 1
     Case "--log" : i + 1 : logFrames = Val(ProgramParameter(i))
     Case "--type" : i + 1 : TypeText$ = ProgramParameter(i)
     Case "--type-at" : i + 1 : TypeAt = Val(ProgramParameter(i))
+    Case "--type-file"
+      i + 1
+      If ReadFile(0, ProgramParameter(i))
+        While Not Eof(0) : TypeText$ + ReadString(0) + "\n" : Wend
+        CloseFile(0)
+      EndIf
     Case "--fast" : EmuFull = 1
+    Case "--timing" : ShowTiming = 1
     Case "--shot" : i + 1 : ShotPath$ = ProgramParameter(i) : i + 1 : ShotFrames = Val(ProgramParameter(i))
     Default
       For d = 0 To 3
@@ -451,6 +532,9 @@ For i = 0 To CountProgramParameters() - 1
 Next
 If logFrames >= 0 : OpenConsole() : HostConsole = 1 : EndIf
 VideoInit()
+CompilerIf #COCO_CPU = 1
+  CpuDisasmInit()
+CompilerEndIf
 CocoReset()                              ; (maps memory; the ROMs are looked up when the CPU resets)
 err$ = HostLoadRoms(rom$, cart$)
 If err$ <> ""
