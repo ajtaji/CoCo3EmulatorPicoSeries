@@ -94,17 +94,24 @@ Procedure ScreenRender()
   Next
 EndProcedure
 
-; Keys typed by --type (after the boot screen has come up).
+; Keys typed by --type / --type-file, after the boot screen has come up: one line at a time, the next only
+; when the last line's keys are all in and the CoCo has had a second to act on it (BASIC polls the keyboard
+; while it runs a command - for a pause key - and a key pressed then is lost, as on the real machine).
+Global TypeIdleSince.i
 Procedure TypeFeed()
-  Protected i.i, c.i
+  Protected i.i, c.i, line$, cut.i
   If TypeText$ = "" Or EmuFrames < TypeAt : ProcedureReturn : EndIf
-  For i = 1 To Len(TypeText$)
-    c = Asc(Mid(TypeText$, i, 1))
-    If c = '\' And Mid(TypeText$, i + 1, 1) = "n" : c = 13 : i + 1 : EndIf
-    If c = '\' And Mid(TypeText$, i + 1, 1) = "q" : c = 34 : i + 1 : EndIf    ; a quote (a command line drops real ones)
+  If KeyPending() Or KeyState : TypeIdleSince = EmuFrames : ProcedureReturn : EndIf
+  If EmuFrames - TypeIdleSince < 60 : ProcedureReturn : EndIf
+  cut = FindString(TypeText$, "\n")
+  If cut : line$ = Left(TypeText$, cut + 1) : TypeText$ = Mid(TypeText$, cut + 2) : Else : line$ = TypeText$ : TypeText$ = "" : EndIf
+  For i = 1 To Len(line$)
+    c = Asc(Mid(line$, i, 1))
+    If c = '\' And Mid(line$, i + 1, 1) = "n" : c = 13 : i + 1 : EndIf
+    If c = '\' And Mid(line$, i + 1, 1) = "q" : c = 34 : i + 1 : EndIf    ; a quote (a command line drops real ones)
     KeyPut(c)
   Next
-  TypeText$ = ""
+  TypeIdleSince = EmuFrames
 EndProcedure
 
 Global EmuCpuUs.q, EmuSndUs.q
