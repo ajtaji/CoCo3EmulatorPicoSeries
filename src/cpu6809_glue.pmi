@@ -28,11 +28,10 @@ Procedure.i CocoCpuRun(cycles.i)
   ProcedureReturn CocoCpuUsed
 EndProcedure
 
-; The cycles the window in progress has used so far (valid inside the core's I/O hooks, where the
-; core has cut the window: CpuLeft + CpuCut is what remains of CpuBudget).
+; The cycles the window in progress has used so far: the core's CpuElapsed() (0 between windows).
 Procedure.i CocoCpuElapsed()
   If CocoInWindow = 0 : ProcedureReturn 0 : EndIf
-  ProcedureReturn CpuBudget - CpuLeft - CpuCut
+  ProcedureReturn CpuElapsed()
 EndProcedure
 
 Procedure.i CocoCpuPc()
