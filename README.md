@@ -79,7 +79,8 @@ status line read over USB by `tools/board.py`; the scripts are in `tests/`.
 
   Paced is the default: the machine runs at exactly the real machine's rate. The unthrottled rate at
   0.89 MHz is lower in kHz because the machine's per-scanline work is the same at both speeds.
-- Disk: `DIR`, `SAVE "PICO"`, `LOAD "PICO"` on a blank disk in flash (`tests/disk.txt`).
+- Disk: on a blank disk in flash a typed program is SAVEd, wiped, LOADed and RUN (`tests/disk.txt`); after
+  a reflash and cold boot `DIR` still lists it and it LOADs and RUNs (`tests/disk_persist.txt`).
 
 ## Sources
 
