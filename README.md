@@ -20,7 +20,7 @@ against the SHA-1s MAME lists) and puts them in the board's flash; the firmware 
 | PIA0: keyboard matrix (with ALT, CTRL, F1, F2), joystick comparator and mux; PIA1: 6-bit DAC, single-bit sound, SNDEN, RAM size sense | written |
 | 0.89 / 1.79 MHz ($FFD8/$FFD9), paced to the real machine's 59.92 frames a second (262 lines of 1824 GIME clocks) | run on the board (both speeds measured) |
 | FD-502 disk controller: DSKREG and a WD1793, four .DSK drives in flash, writes kept | run on the board: DIR, SAVE, LOAD |
-| Sound to a Bluetooth speaker | written: 48 kHz DAC sampling and the speaker path (private build, it compiles); not yet heard on the board |
+| Sound to a Bluetooth speaker | partly run: the private build connected and streamed BASIC's SOUND (455 packets), then the stream stalled with the link still up; the next start found no speaker (page timeout). Open |
 | Cassette, RS-232, cartridge autostart, joystick hardware | not emulated |
 
 Guest RAM is **128 KB** on both boards. 512 KB does not fit: on the Pico W the 6809 core's code takes

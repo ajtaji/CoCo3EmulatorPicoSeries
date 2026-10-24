@@ -1,0 +1,17 @@
+# Bluetooth stream state over time (private build): when does the packet count stop, and with what state.
+expect 60 Sound: (playing|Bluetooth error)
+cmd s
+wait 1
+cmd s
+wait 1
+cmd s
+wait 2
+cmd s
+wait 2
+cmd s
+line SOUND 100,30
+wait 2
+cmd s
+wait 2
+cmd s
+expect 3 bt_polls

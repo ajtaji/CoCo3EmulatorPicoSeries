@@ -9,7 +9,7 @@
 ; record ("BTK1" in the last flash sector) when one is there, so the speaker does not pair again.
 
 Global Dim CocoBtPeer.a(6)
-Global CocoBtPeerSet.i, CocoAudioLive.i, CocoAudioRc.i, CocoAudioLast.i, CocoAudioGap.i = 700
+Global CocoBtPeerSet.i, CocoAudioLive.i, CocoAudioRc.i, CocoAudioLast.i, CocoAudioGap.i = 700, CocoAudioPolls.i
 
 Procedure CocoAudioPeer(src.i)
   Protected i.i
@@ -50,13 +50,17 @@ Procedure CocoAudioPoll()
   now = Micros()
   If now - CocoAudioLast < CocoAudioGap : ProcedureReturn : EndIf
   CocoAudioLast = now
+  CocoAudioPolls = CocoAudioPolls + 1
   BtAudioPoll()
   If BtAudioBusy() : CocoAudioGap = 150 : Else : CocoAudioGap = 700 : EndIf
 EndProcedure
 
 Procedure CocoAudioReport()
   Say(" bt_live=") : Num(BtAudioLive()) : Say(" bt_packets=") : Num(BtAudioPackets())
-  Say(" bt_underruns=") : Num(BtAudioUnderruns())
+  Say(" bt_underruns=") : Num(BtAudioUnderruns()) : Say(" bt_late=") : Num(BtAudioLate())
+  Say(" bt_polls=") : Num(CocoAudioPolls) : Say(" bt_credits=") : Num(bt_credits) : Say(" bt_frames=") : Num(btaud_nframes)
+  Say(" bt_step=") : Num(btaud_step) : Say(" bt_event=") : Num(btaud_event) : Say(" bt_error=") : Num(btaud_error)
+  Say(" bt_overruns=") : Num(BtAudioOverruns())
 EndProcedure
 
 Procedure.i CocoAudioOn()
