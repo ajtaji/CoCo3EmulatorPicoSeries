@@ -82,6 +82,39 @@ status line read over USB by `tools/board.py`; the scripts are in `tests/`.
 - Disk: on a blank disk in flash a typed program is SAVEd, wiped, LOADed and RUN (`tests/disk.txt`); after
   a reflash and cold boot `DIR` still lists it and it LOADs and RUNs (`tests/disk_persist.txt`).
 
+## The desktop program (desktop/)
+
+The same CoCo 3 on a Windows PC, in PureBasic, drawn with the Neon Arcade Display Engine. It compiles the
+machine files in `src/` unchanged (GIME, PIAs, video, keyboard, sound, FD-502) with the PC's own host layer
+(`desktop/host.pbi`) and the desktop 6809 core of 6809EmulatorPicoSeries (`desktop/cpu6809.pbi`, clone it
+beside this repository). The PC gives the CoCo **512 KB**, and the FD-502's drives are `.DSK` files.
+
+```powershell
+& "C:\Program Files\PureBasic\Compilers\pbcompilerc.exe" desktop\CoCo3.pb /EXE build\CoCo3.exe /THREAD /DPIAWARE
+build\CoCo3.exe [--rom coco3.rom] [--cart disk11.rom] [--disk0 games.dsk] [--new-disk1 blank.dsk]
+tools\desktop_check.ps1          # build, then the console checks below
+```
+
+The window shows the CoCo's screen (4:3, scaled to fit), the 6809's registers, the GIME's registers, MMU
+and palette, a disassembly from the PC, a memory view, the log, Run/Pause/Step/Frame/Reset/Full speed/Mute,
+and the drives. Typing goes to the CoCo keyboard (arrows, Esc = BREAK, Home = CLEAR, F1, F2); F5 run/pause,
+F10 one instruction, F11 one frame, F3 reset, F8 full speed, F9 mute. Sound plays through Windows.
+`--log N` runs N frames with no window and prints the CoCo's screen as text; `--type` / `--type-file` type
+into it; `--shot file.png N` saves the window after N frames.
+
+Measured on this PC (2026-10-23, `tools/desktop_check.ps1`): BASIC boots and runs a typed program; BASIC's
+10-second TIMER loop counts **910**, the same as on the Pico W (`tests/timer.txt`); a program SAVEd to a new
+`.DSK` loads and runs in a second session. Unthrottled, the console runs 280-410 MHz of 6809 cycles (300-450x a
+real CoCo 3); the window holds the real machine's 59.92 frames a second.
+
+## The PureMetal demo (demo/)
+
+`demo/coco3demo.coco3` is a PureMetal program for the CoCo 3 itself, built with PureMetalForge's
+"Tandy Color Computer 3 (Disk BASIC)" board into a Disk BASIC disk: a 320 x 192 x 16 GIME picture held in a
+PureMetal array, a title in large letters, palette bands rolling up the screen, and a tune on the 6-bit DAC
+played from the GIME's fast timer on FIRQ. `LOADM"COCO3DEM":EXEC` from the disk in drive 0 (on the Pico,
+put the `.dsk` in a slot with `make_disk_region.py`).
+
 ## Sources
 
 MAME's `gime.cpp`, `coco3.cpp`, `coco.cpp`, `coco_fdc.cpp` and `mc6847.cpp` (BSD-3-Clause) were read
