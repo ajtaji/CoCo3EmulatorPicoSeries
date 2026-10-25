@@ -1,6 +1,6 @@
 # Make the check build that runs the assembly kernels and the PureMetal ones on every call and counts
 # differences (tests/vcheck.txt reads the counts): build/vcheck/CoCo3, with the 6809 core beside it.
-#   py -3 tools/vcheck_build.py [--target rp2350|rp2040] [--core-commit 25cde43]
+#   py -3 tools/vcheck_build.py [--target rp2350|rp2040] [--core-commit 18b0e00]
 #   then build build/vcheck/CoCo3/rp2350/<wrapper> (video_t2.pmi) or rp2040/<wrapper> (video_t1.pmi)
 # The core is taken from ../6809EmulatorPicoSeries at the commit given (default: its HEAD), never from its
 # working tree, which may hold uncommitted changes.

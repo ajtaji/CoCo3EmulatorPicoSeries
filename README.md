@@ -50,7 +50,7 @@ does not fit beside the 6809 core in SRAM.
 ## Performance
 
 Measured on the boards with the firmware's own status line (`tests/speed.txt`, `tests/demo.txt`,
-`tests/p2w_panel.txt`), PureMetalForge 341fd5aca, the 6809 core at 25cde43:
+`tests/p2w_panel.txt`), PureMetalForge 341fd5aca, the 6809 core at 18b0e00:
 
 | | Pico W + panel | Pico 2 W + panel | Feather RP2350 |
 |---|---:|---:|---:|
