@@ -105,6 +105,11 @@ status line read over USB by `tools/board.py`; the scripts are in `tests/`.
   199,297 scale calls, 2,471,728 glyph rows, 84,942 graphics runs, 39,864 fills, **0 differences**. The
   RP2040's six mode pictures (`tests/video_modes.txt`) are byte-identical to before; BASIC, the TIMER loop
   (910) and the demo pass on both chips.
+
+  Then the 6809 core's own Thumb-2 dispatch tail and short branches (its commit `d9f5978`; its RP2040 file
+  is unchanged): Feather RP2350 unthrottled **3,525 -> 3,736 kHz (4.17x a real CoCo 3) at 0.89 MHz and
+  4,255 -> 4,560 kHz (2.55x) at 1.79 MHz**, core 0 24% busy paced at 0.89 MHz, 39% at 1.79; BASIC, the
+  TIMER loop (910) and the demo pass. From both: 3,420 -> 3,736 kHz and 4,235 -> 4,560 kHz on the RP2350.
 - Disk: on a blank disk in flash a typed program is SAVEd, wiped, LOADed and RUN (`tests/disk.txt`); after
   a reflash and cold boot `DIR` still lists it and it LOADs and RUNs (`tests/disk_persist.txt`).
 
