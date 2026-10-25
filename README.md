@@ -133,23 +133,42 @@ in `src/`.
 
 The same CoCo 3 for Windows, in PureBasic, drawn with the
 [Neon Arcade Display Engine](https://github.com/ajtaji/Neon-Arcade-Dispay-Engine): the machine files in
-`src/` compiled unchanged with a PC host layer (`desktop/host.pbi`) and the 6809 core's desktop build. The PC
-gives the CoCo 512 KB, and the drives are `.DSK` files. Clone the engine and 6809EmulatorPicoSeries beside
-this repository.
+`src/` compiled unchanged with a PC host layer (`desktop/host.pbi`) and the desktop build of the
+[6809 core](https://github.com/ajtaji/6809EmulatorPicoSeries). The PC gives the CoCo 512 KB, and the drives
+are `.DSK` files.
+
+### Building the desktop version
+
+Requires PureBasic 6.41 or later, x64, C back end (`pbcompilerc.exe`). Clone the three repositories side
+by side - the build finds the engine and the 6809 core beside this one - and build from this repository's
+folder (PowerShell):
 
 ```powershell
+git clone https://github.com/ajtaji/CoCo3EmulatorPicoSeries.git
+git clone https://github.com/ajtaji/6809EmulatorPicoSeries.git
+git clone https://github.com/ajtaji/Neon-Arcade-Dispay-Engine.git
+cd CoCo3EmulatorPicoSeries
+mkdir build
 & "C:\Program Files\PureBasic\Compilers\pbcompilerc.exe" desktop\CoCo3.pb /EXE build\CoCo3.exe /THREAD /DPIAWARE
+```
+
+To use the engine or the core from somewhere else, add `/CONSTANT GL_ENGINE_DIR$=<path>/` or
+`/CONSTANT COCO_CPU_DIR$=<path>/desktop/` (with the trailing slash).
+
+### Running it
+
+```powershell
 build\CoCo3.exe --rom <coco3.rom> --cart <disk11.rom>
 build\CoCo3.exe --rom <coco3.rom> --cart <disk11.rom> --disk0 demo\coco3demo.dsk --type 'LOADM\qCOCO3DEM\q:EXEC\n'
 tools\desktop_check.ps1 -Rom <folder with coco3.rom and disk11.rom>
 ```
 
-ROMs default to a `roms` folder beside `CoCo3.exe`. The window shows the CoCo's screen, the 6809's and the
-GIME's registers, the MMU and palette, a disassembly, memory, the log and the drives. Typing goes to the
-CoCo (arrows, Esc = BREAK, Home = CLEAR, F1, F2); F5 run/pause, F10 one instruction, F11 one frame, F3
-reset, F8 full speed, F9 mute. `--log N` runs N frames without a window and prints the screen as text;
-`--type` and `--type-file` type into the CoCo (`\n` is ENTER, `\q` a quote); `--shot file.png N` saves the
-window after N frames; `--wav file.wav` records the sound.
+The ROMs (see [ROMs](#roms)) default to a `roms` folder beside `CoCo3.exe`. The window shows the CoCo's
+screen, the 6809's and the GIME's registers, the MMU and palette, a disassembly, memory, the log and the
+drives. Typing goes to the CoCo (arrows, Esc = BREAK, Home = CLEAR, F1, F2); F5 run/pause, F10 one
+instruction, F11 one frame, F3 reset, F8 full speed, F9 mute. `--log N` runs N frames without a window and
+prints the screen as text; `--type` and `--type-file` type into the CoCo (`\n` is ENTER, `\q` a quote);
+`--shot file.png N` saves the window after N frames and closes it; `--wav file.wav` records the sound.
 
 ## The PureMetal demo
 

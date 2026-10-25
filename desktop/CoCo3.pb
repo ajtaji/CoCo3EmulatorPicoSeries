@@ -3,6 +3,8 @@
 ; and coco3.pmi are compiled here unchanged; the PC gives it 512 KB of RAM and .DSK files for the FD-502.
 ;
 ; BUILD (x64, from PowerShell, C back end):
+;   (Neon-Arcade-Dispay-Engine and 6809EmulatorPicoSeries cloned beside this repository; from its folder:)
+;   mkdir build
 ;   & "C:\Program Files\PureBasic\Compilers\pbcompilerc.exe" desktop\CoCo3.pb /EXE build\CoCo3.exe /THREAD /DPIAWARE
 ;       [/CONSTANT GL_ENGINE_DIR$=C:/path/to/engine/]   (default below)
 ;       [/CONSTANT COCO_CPU_DIR$=C:/path/to/6809EmulatorPicoSeries/desktop/]   (default: beside this repo)
