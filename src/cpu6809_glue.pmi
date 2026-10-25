@@ -11,7 +11,7 @@ EndProcedure
 ; Run at least `cycles` E cycles; returns the cycles used (whole instructions, so a few more).
 ; A core stopped on an undocumented opcode does not run: the time passes and it is reported once.
 Global CocoCpuUsed.i
-Procedure.i CocoCpuRun(cycles.i)
+ProcedureRAM.i CocoCpuRun(cycles.i)
   If CpuStopped
     If CocoCpuStopReported = 0
       CocoCpuStopReported = 1
@@ -29,7 +29,7 @@ Procedure.i CocoCpuRun(cycles.i)
 EndProcedure
 
 ; The cycles the window in progress has used so far: the core's CpuElapsed() (0 between windows).
-Procedure.i CocoCpuElapsed()
+ProcedureRAM.i CocoCpuElapsed()
   If CocoInWindow = 0 : ProcedureReturn 0 : EndIf
   ProcedureReturn CpuElapsed()
 EndProcedure

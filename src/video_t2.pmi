@@ -106,6 +106,10 @@ ProcedureRAM VideoGraphicsRun()
     ldr r5, [r5]
     ldr r6, =global_vxbase
     ldr r6, [r6]
+    ldr r0, =global_vxwords
+    ldr r0, [r0]
+    cmp r0, #0
+    bne t2_lut
     ldr r0, =global_vdbpp
     ldr r0, [r0]
     cmp r0, #4
@@ -170,6 +174,46 @@ ProcedureRAM VideoGraphicsRun()
     lsl r0, r0, #24
     orr r0, r0, #0x00800000
     b t2_g1_pix
+  ; the look-up table: r12 = VideoLut, r0 = VxWords (1, 2 or 4), each byte's entry is 16 bytes
+  t2_lut:
+    ldr r12, =global_videolut
+    cmp r0, #1
+    bne t2_lut2
+  t2_lut1:
+    cmp r1, r3
+    beq t2_g_done
+    ldrb r0, [r1], #1
+    add r0, r12, r0, lsl #4
+    ldr r6, [r0]
+    str r6, [r2], #4
+    b t2_lut1
+  t2_lut2:
+    cmp r0, #2
+    bne t2_lut4
+  t2_lut2_loop:
+    cmp r1, r3
+    beq t2_g_done
+    ldrb r0, [r1], #1
+    add r0, r12, r0, lsl #4
+    ldr r6, [r0]
+    ldr r4, [r0, #4]
+    str r6, [r2], #4
+    str r4, [r2], #4
+    b t2_lut2_loop
+  t2_lut4:
+    cmp r1, r3
+    beq t2_g_done
+    ldrb r0, [r1], #1
+    add r0, r12, r0, lsl #4
+    ldr r6, [r0]
+    ldr r4, [r0, #4]
+    str r6, [r2], #4
+    str r4, [r2], #4
+    ldr r6, [r0, #8]
+    ldr r4, [r0, #12]
+    str r6, [r2], #4
+    str r4, [r2], #4
+    b t2_lut4
   t2_g_done:
   EndASM
   VxX = VxX + VxCount * (8 / VdBpp) * VdScale
@@ -187,5 +231,30 @@ ProcedureRAM VideoFill(index.i)
     str r1, [r0], #4
     subs r2, r2, #1
     bne t2_fill_loop
+  EndASM
+EndProcedure
+
+ProcedureRAM VideoCrc()
+  ; r0 = source, r1 = its end, r3 = the CRC, r12 = the table, r6 = a byte's entry
+  ASM
+    ldr r0, =global_vxsrc
+    ldr r0, [r0]
+    ldr r1, =global_vxcount
+    ldr r1, [r1]
+    add r1, r1, r0
+    ldr r2, =global_vxhash
+    ldr r3, [r2]
+    ldr r12, =global_videocrctab
+  t2_crc_loop:
+    cmp r0, r1
+    beq t2_crc_done
+    ldrb r6, [r0], #1
+    eor r6, r6, r3
+    and r6, r6, #255
+    ldr r6, [r12, r6, lsl #2]
+    eor r3, r6, r3, lsr #8
+    b t2_crc_loop
+  t2_crc_done:
+    str r3, [r2]
   EndASM
 EndProcedure

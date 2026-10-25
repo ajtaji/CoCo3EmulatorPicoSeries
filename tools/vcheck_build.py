@@ -19,7 +19,8 @@ src = out / 'CoCo3' / 'src'
 def rename(path, prefix):
     t = path.read_text(encoding='utf-8')
     for old, new in (('ProcedureRAM.l VideoScaleOut()', 'ProcedureRAM.l %sScaleOut()'), ('ProcedureRAM VideoBits()', 'ProcedureRAM %sBits()'),
-                     ('ProcedureRAM VideoGraphicsRun()', 'ProcedureRAM %sGraphicsRun()'), ('ProcedureRAM VideoFill(index.i)', 'ProcedureRAM %sFill(index.i)')):
+                     ('ProcedureRAM VideoGraphicsRun()', 'ProcedureRAM %sGraphicsRun()'), ('ProcedureRAM VideoFill(index.i)', 'ProcedureRAM %sFill(index.i)'),
+                     ('ProcedureRAM VideoCrc()', 'ProcedureRAM %sCrc()')):
         assert t.count(old) == 1, (path, old)
         t = t.replace(old, new % prefix)
     path.write_text(t, encoding='utf-8')
@@ -31,7 +32,8 @@ old = '  Say(" late=") : Num(CocoLate)\n'
 assert t.count(old) == 1
 t = t.replace(old, old + '  Say(" vcheck scale=") : Num(VcCalls(0)) : Say("/") : Num(VcBad(0)) : Say(" bits=") : Num(VcCalls(1)) : Say("/") : Num(VcBad(1))\n'
               '  Say(" graphics=") : Num(VcCalls(2)) : Say("/") : Num(VcBad(2)) : Say(" fill=") : Num(VcCalls(3)) : Say("/") : Num(VcBad(3))\n'
-              '  Say(" vcheck_bad=") : Num(VcBad(0) + VcBad(1) + VcBad(2) + VcBad(3))\n')
+              '  Say(" crc=") : Num(VcCalls(4)) : Say("/") : Num(VcBad(4))\n'
+              '  Say(" vcheck_bad=") : Num(VcBad(0) + VcBad(1) + VcBad(2) + VcBad(3) + VcBad(4))\n')
 mon.write_text(t, encoding='utf-8')
 body = out / 'CoCo3' / 'rp2350' / 'coco3_body.pico2'; t = body.read_text(encoding='utf-8')
 t, n = re.subn(r'(XIncludeFile "\.\./src/video_t2\.pmi"[^\n]*\n)', r'\1XIncludeFile "../src/video_portable.pmi"\nXIncludeFile "../src/video_check.pmi"\n', t)

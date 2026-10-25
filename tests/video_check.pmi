@@ -1,9 +1,9 @@
 ; The Thumb-2 check build only (tools/vcheck_build.py makes it): every call of the four renderer kernels
 ; runs the PureMetal version (Port*) and the Thumb-2 version (T2*) on the same inputs - graphics from a
 ; snapshot of its source bytes, which core 0 may be writing - and compares what they wrote.
-; VcCalls(k) / VcBad(k): 0 scale, 1 bits, 2 graphics, 3 fill. tests/vcheck.txt reads them.
-Global Dim VcCalls.i(4)
-Global Dim VcBad.i(4)
+; VcCalls(k) / VcBad(k): 0 scale, 1 bits, 2 graphics, 3 fill, 4 crc. tests/vcheck.txt reads them.
+Global Dim VcCalls.i(5)
+Global Dim VcBad.i(5)
 Global Dim VcSamples.a(640)
 Global Dim VcOut.u(480)
 Global Dim VcSrc.a(256)
@@ -30,7 +30,7 @@ Procedure VideoBits()
   VcCalls(1) = VcCalls(1) + 1 : VcBad(1) = VcBad(1) + bad
 EndProcedure
 Procedure VideoGraphicsRun()
-  Protected x0.i, x1.i, x.i, bad.i, i.i
+  Protected x0.i, x1.i, x.i, bad.i, i.i, words.i
   For i = 0 To VxCount - 1 : VcSrc(i) = PeekA(VxSrc + i) : Next
   VxSrc = @VcSrc(0)
   x0 = VxX
@@ -41,6 +41,14 @@ Procedure VideoGraphicsRun()
   T2GraphicsRun()
   If VxX <> x1 : bad = 1 : EndIf
   For x = x0 To x1 - 1 : If VcSamples(x) <> VideoSamples(x) : bad = 1 : EndIf : Next
+  ; and against the pixel-by-pixel reference, without the look-up table
+  If VxWords
+    words = VxWords : VxWords = 0 : VxX = x0
+    PortGraphicsRun()
+    VxWords = words
+    If VxX <> x1 : bad = 1 : EndIf
+    For x = x0 To x1 - 1 : If VcSamples(x) <> VideoSamples(x) : bad = 1 : EndIf : Next
+  EndIf
   VcCalls(2) = VcCalls(2) + 1 : VcBad(2) = VcBad(2) + bad
 EndProcedure
 Procedure VideoFill(index.i)
@@ -50,4 +58,17 @@ Procedure VideoFill(index.i)
   T2Fill(index)
   For x = 0 To 639 : If VcSamples(x) <> VideoSamples(x) : bad = 1 : EndIf : Next
   VcCalls(3) = VcCalls(3) + 1 : VcBad(3) = VcBad(3) + bad
+EndProcedure
+Procedure VideoCrc()
+  Protected h0.l, h1.l, i.i, n.i
+  n = VxCount
+  For i = 0 To n - 1 : VcSrc(i) = PeekA(VxSrc + i) : Next
+  VxSrc = @VcSrc(0)
+  h0 = VxHash
+  PortCrc()
+  h1 = VxHash
+  VxHash = h0
+  T2Crc()
+  VcCalls(4) = VcCalls(4) + 1
+  If VxHash <> h1 : VcBad(4) = VcBad(4) + 1 : EndIf
 EndProcedure

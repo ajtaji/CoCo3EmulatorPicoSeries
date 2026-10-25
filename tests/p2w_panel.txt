@@ -1,0 +1,33 @@
+# The Pico 2 W with the LAFVIN panel (rp2350/coco3.pico2w: ROMs and the demo disk sent over USB into SRAM -
+# a shared board's flash is full). BASIC, the TIMER loop, the demo; the status lines give the panel's
+# frame rate (video_fps_x10) and each core's busy share (core0_busy_pct, core1_busy_pct).
+#   make_rom_region.py --target rp2350 --offset 0 --bin build/p2w_rom.bin ...
+#   make_disk_region.py --drive 0 demo/coco3demo.dsk --target rp2350 --offset 0 --bin build/p2w_disk.bin ...
+images build/p2w_rom.bin build/p2w_disk.bin
+expect 15 disks: 1 0
+screen 20 \r\nOK +\r\n
+wait 4
+cmd s
+wait 5
+cmd s
+line PRINT 2+3
+screen 8 \r\n 5 +\r\n
+line 10 TIMER=0:A=0
+wait 1
+line 20 A=A+1:IF TIMER<600 THEN 20
+wait 1
+line 30 PRINT "LOOPS IN 600 TICKS";A
+wait 1
+line RUN
+screen 20 LOOPS IN 600 TICKS +[0-9]+
+cmd s
+capture build/p2w_basic.png
+line LOADM"COCO3DEM":EXEC
+wait 30
+cmd s
+wait 5
+cmd s
+wait 5
+cmd s
+screen 5 TEXT none
+capture build/p2w_demo.png

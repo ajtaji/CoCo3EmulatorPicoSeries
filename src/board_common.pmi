@@ -56,7 +56,17 @@ EndProcedure
 
 Procedure VideoSendRow(y.i, pixels.i)
   CompilerIf #COCO_HEADLESS = 0
-    Tft796BlitRect(0, y, #VIDEO_OUT_W, 1, pixels)
+    CompilerIf #COCO_PANEL_ASYNC = 1
+      CocoRowSend(y, pixels)
+    CompilerElse
+      Tft796BlitRect(0, y, #VIDEO_OUT_W, 1, pixels)
+    CompilerEndIf
+  CompilerEndIf
+EndProcedure
+
+Procedure VideoSendDone()
+  CompilerIf #COCO_HEADLESS = 0 And #COCO_PANEL_ASYNC = 1
+    CocoRowFinish()
   CompilerEndIf
 EndProcedure
 
@@ -81,14 +91,91 @@ ProcedureRAM Core1Park()
   Core1Parked = 0
 EndProcedure
 
+; Core 1 draws each picture the machine finishes once - 59.92 a second, the CoCo 3's own rate - and
+; between pictures keeps the speaker going. VideoBusyUs is its working time (the status line's
+; core1_busy_pct); a picture that takes longer than a frame shows the newest finished one next.
+Global Core1Shown.i = -1, Core1T.i
 Procedure Core1Main()
   WorkerReady = 1
   Repeat
     If PeekL(@Core1ParkRequest) : Core1Park() : EndIf
-    VideoFrame()
+    If PeekL(@CocoFrames) <> Core1Shown
+      Core1Shown = PeekL(@CocoFrames)
+      Core1T = Micros()
+      VideoFrame()
+      VideoBusyUs = VideoBusyUs + Micros() - Core1T
+    Else
+      CocoAudioPoll()
+    EndIf
   ForEver
 EndProcedure
 
+CompilerIf #COCO_SRAM_IMAGES = 1
+; The ROM region and one disk slot, sent over USB at boot (see the wrapper).
+Global Dim CocoRomImage.a(#ROM_REGION_BYTES)
+Global Dim CocoDiskImage.a(#DISK_SLOT_BYTES)
+Global ImgT.i, ImgStart.i, ImgKind.i, ImgOff.i, ImgLen.i, ImgCrc.l, ImgDst.i, ImgCap.i, ImgI.i, ImgC.i, ImgBlocks.i
+
+; The next byte from the host, waiting up to 2 s; -1 when none came.
+Procedure.i ImgByte()
+  ImgT = Micros()
+  Repeat
+    If UsbSerialAvailable() > 0 : ProcedureReturn UsbSerialRead() : EndIf
+    CocoBoardService()
+  Until Micros() - ImgT > 2000000
+  ProcedureReturn -1
+EndProcedure
+
+; Blocks of 'I' kind(0 ROM region, 1 disk slot) offset(4) length(2, at most 4096) data CRC-32(4),
+; each answered IMG OK or IMG BAD (and dropped); 'G' ends it. Nothing for 10 s: go on without.
+Procedure CocoReceiveImages()
+  ; both start as erased flash does, $FF: the sender leaves out trailing 4 KB of $FF (an empty disk's
+  ; unused sectors are $FF, and Disk BASIC's FAT calls a granule free by $FF)
+  For ImgI = 0 To #ROM_REGION_BYTES - 1 : CocoRomImage(ImgI) = $FF : Next
+  For ImgI = 0 To #DISK_SLOT_BYTES - 1 : CocoDiskImage(ImgI) = $FF : Next
+  Say("COCO SEND IMAGES rom=") : Num(#ROM_REGION_BYTES) : Say(" disk=") : Num(#DISK_SLOT_BYTES) : Eol()
+  ImgStart = Micros()
+  Repeat
+    ImgC = -1
+    If UsbSerialAvailable() > 0 : ImgC = UsbSerialRead() : Else : CocoBoardService() : EndIf
+    If ImgC = 71
+      Say("IMAGES DONE blocks=") : Num(ImgBlocks) : Eol()
+      ProcedureReturn
+    EndIf
+    If ImgC = 73
+      ImgKind = ImgByte()
+      ImgOff = ImgByte() | (ImgByte() << 8) | (ImgByte() << 16) | (ImgByte() << 24)
+      ImgLen = ImgByte() | (ImgByte() << 8)
+      If ImgKind = 0
+        ImgDst = @CocoRomImage(0) : ImgCap = #ROM_REGION_BYTES
+      Else
+        ImgDst = @CocoDiskImage(0) : ImgCap = #DISK_SLOT_BYTES
+      EndIf
+      If ImgLen > 4096 Or ImgOff < 0 Or ImgOff + ImgLen > ImgCap Or ImgKind < 0 Or ImgKind > 1
+        Say("IMG BAD place") : Eol()
+      Else
+        For ImgI = 0 To ImgLen - 1 : PokeA(ImgDst + ImgOff + ImgI, ImgByte()) : Next
+        ImgCrc = ImgByte() | (ImgByte() << 8) | (ImgByte() << 16) | (ImgByte() << 24)
+        If CocoCrc32(ImgDst + ImgOff, ImgLen) = ImgCrc
+          ImgBlocks = ImgBlocks + 1
+          Say("IMG OK") : Eol()
+        Else
+          Say("IMG BAD crc") : Eol()
+        EndIf
+      EndIf
+      ImgStart = Micros()
+    EndIf
+  Until Micros() - ImgStart > 10000000
+  Say("IMAGES none came in 10 s") : Eol()
+EndProcedure
+
+; A disk sector written: into the image in SRAM (kept until the board is reset).
+Procedure.i DiskStore(d.i, off.i, src.i)
+  Protected i.i
+  For i = 0 To 255 : PokeA(DiskBase(d) + off + i, PeekA(src + i)) : Next
+  ProcedureReturn 1
+EndProcedure
+CompilerElse
 ; A disk sector written: read the flash sector around it, patch, erase, program (disk.pmi's DiskStore).
 Global Dim DiskSectorBuf.a(4096)
 Procedure.i DiskStore(d.i, off.i, src.i)
@@ -99,6 +186,7 @@ Procedure.i DiskStore(d.i, off.i, src.i)
   For i = 0 To 255 : DiskSectorBuf((flashOff & $FFF) + i) = PeekA(src + i) : Next
   ProcedureReturn CocoFlashSector(sect, @DiskSectorBuf(0))
 EndProcedure
+CompilerEndIf
 
 ; Erase one 4 KB flash sector and program it from SRAM, with core 1 parked off the flash. Only the disk
 ; region may be written: anything else is refused (a wrong sector number must never erase the program).
@@ -131,10 +219,19 @@ Procedure CocoBoot()
   WaitUs(200000)
   Say("CoCo 3 PureMetal ") : Say(#COCO_BOARD_NAME$) : Say(" clk_khz=") : Num(ClockSysKhz()) : Eol()
   VideoInit()
-  MainE = CocoLoadRoms(#COCO_ROM_FLASH)
+  CompilerIf #COCO_SRAM_IMAGES = 1
+    CocoReceiveImages()
+    MainE = CocoLoadRoms(@CocoRomImage(0))
+  CompilerElse
+    MainE = CocoLoadRoms(#COCO_ROM_FLASH)
+  CompilerEndIf
   CocoRomError = MainE
   CocoRomMessage(MainE)
-  DiskInit($10000000 + #COCO_DISK_OFFSET, #COCO_DISK_OFFSET, #COCO_DISK_FLASH_SLOTS)
+  CompilerIf #COCO_SRAM_IMAGES = 1
+    DiskInit(@CocoDiskImage(0), 0, 1)
+  CompilerElse
+    DiskInit($10000000 + #COCO_DISK_OFFSET, #COCO_DISK_OFFSET, #COCO_DISK_FLASH_SLOTS)
+  CompilerEndIf
   Say("disks:") : For MainT = 0 To #DISK_SLOTS - 1 : Say(" ") : Num(Bool(DiskBase(MainT) <> 0)) : Next : Eol()
   VideoBegin()
   Say("spi_hz=") : Num(SpiHz(0)) : Eol()

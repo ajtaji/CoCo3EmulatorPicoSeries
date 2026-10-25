@@ -12,7 +12,7 @@
 
 Global CocoFullSpeed.i, CocoReport.i = 1, CocoMonitor.i, CocoMonI.i
 Global CocoRunUs.i, CocoWaitUs.i, CocoLate.i, CocoRomError.i
-Global CocoStatFrames.i, CocoStatCycles.i, CocoStatAt.i, CocoStatRun.i, CocoStatVideo.i
+Global CocoStatFrames.i, CocoStatCycles.i, CocoStatAt.i, CocoStatRun.i, CocoStatVideo.i, CocoStatBusy1.i, CocoStatLines.i
 
 Declare CocoBoardService()
 Declare CocoParkVideo(on.i)
@@ -125,7 +125,7 @@ Declare CocoLineHook()                   ; the host's: after each line (USB serv
 ; A GIME timer that falls due inside a line ends the CPU's window there, so its interrupt (a program making
 ; a tone with the 279 ns timer, say) comes at the right instruction rather than at the next line.
 Global RunTimer.i
-Procedure CocoFrame()
+ProcedureRAM CocoFrame()
   Repeat
     While CocoLinePos < #GIME_LINE_CLOCKS
       RunNeed = (#GIME_LINE_CLOCKS - CocoLinePos + CocoCycleClocks - 1) / CocoCycleClocks

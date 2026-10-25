@@ -44,6 +44,8 @@ def main():
     p.add_argument('--target', choices=sorted(FAMILY), default='rp2040')
     p.add_argument('--offset', type=lambda s: int(s, 0), help='flash offset of slot 0 (default per target)')
     p.add_argument('--out', type=Path, required=True)
+    p.add_argument('--bin', type=Path, help="also write the first drive's slot, header and image, as raw bytes "
+                   "(board.py's images verb sends it to a build that keeps its disk in SRAM)")
     a = p.parse_args()
     base = 0x10000000 + (a.offset if a.offset is not None else OFFSET[a.target])
     blocks = []
@@ -68,6 +70,9 @@ def main():
         slot[0:28] = b'CDSK' + struct.pack('<6I', 2, len(data), tracks, sides, 18, head)
         slot[DATA:DATA + len(data)] = data
         blocks += uf2_blocks(bytes(slot), base + n * SLOT, FAMILY[a.target])
+        if a.bin and n == int(a.drive[0][0]):
+            a.bin.parent.mkdir(parents=True, exist_ok=True)
+            a.bin.write_bytes(bytes(slot[:DATA + len(data)]))
         print(f'drive {n}: {name}, {tracks} tracks, {sides} side(s), flash ${base - 0x10000000 + n * SLOT:06X}')
     out = bytearray()
     for i, (addr, chunk) in enumerate(blocks):

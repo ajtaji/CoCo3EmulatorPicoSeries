@@ -10,6 +10,9 @@ Reads the board's output for --seconds into --output, and runs an optional --scr
     expect <seconds> <regex>  wait until the board's output matches, else FAIL
     screen <seconds> <regex>  ask for the text on the screen (cmd t) until it matches, else FAIL
     capture <file.png>        ask for the rendered picture (cmd c) and save it as a PNG (480 x 240)
+    images <rom.bin> [<disk.bin>]  a build with #COCO_SRAM_IMAGES: wait for COCO SEND IMAGES, send the ROM
+                              region (make_rom_region.py --bin) and a disk slot (make_disk_region.py --bin)
+                              in 4 KB blocks, each CRC-checked by the board, then go
     # comment
 
 Exit 0 when every expect/screen matched, 1 when one did not, 2 when the port vanished.
@@ -106,6 +109,28 @@ def write_png(path, w, h, rgb565):
     Path(path).write_bytes(png)
 
 
+def send_images(paths):
+    if not wait_for(r'COCO SEND IMAGES', 20, 0):
+        note('FAIL: the board never asked for its images')
+        return False
+    for kind, path in enumerate(paths):
+        data = Path(path).read_bytes()
+        while data.endswith(b'\xff' * 4096):       # unused flash padding at the end of a region
+            data = data[:-4096]
+        for off in range(0, len(data), 4096):
+            chunk = data[off:off + 4096]
+            since = len(text)
+            port.write(b'I' + bytes([kind]) + struct.pack('<IH', off, len(chunk)) + chunk
+                       + struct.pack('<I', zlib.crc32(chunk) & 0xffffffff))
+            if not wait_for(r'IMG (OK|BAD[^\r]*)\r\n', 10, since) or b'IMG BAD' in bytes(text[since:]):
+                note(f'FAIL: block {off:#x} of {path} was not taken')
+                return False
+        note(f'sent {path}: {len(data)} bytes')
+    since = len(text)
+    port.write(b'G')
+    return wait_for(r'IMAGES DONE', 10, since)
+
+
 def capture(path):
     since = len(text)
     send(b'\x1dc')
@@ -164,6 +189,10 @@ if a.script:
                     pump(0.5)
             if not ok:
                 note(f'FAIL: the screen never showed {pattern!r} within {secs} s')
+                failed = True
+                break
+        elif verb == 'images':
+            if not send_images(rest.split()):
                 failed = True
                 break
         elif verb == 'capture':

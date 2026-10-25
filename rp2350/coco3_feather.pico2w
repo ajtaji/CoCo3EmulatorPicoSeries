@@ -16,6 +16,7 @@
 #COCO_DISK_FLASH_SLOTS = 1
 #COCO_BTKEY_FLASH = 0
 #COCO_HEADLESS = 1
+#COCO_SRAM_IMAGES = 0                    ; the ROMs and the disk are in its flash ranges
 XIncludeFile "coco3_body.pico2"
 
 Procedure CocoBoardSetup()

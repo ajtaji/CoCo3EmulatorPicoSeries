@@ -40,9 +40,21 @@ EndProcedure
 
 ; VxCount bytes of graphics from the SRAM address VxSrc, VdBpp bits a pixel (high bits first), each
 ; pixel VxBase + its bits, VdScale samples wide, at VideoSamples(VxX). VxX moves on past them.
+; With VxWords set, each byte is VideoLut's entry for it, VxWords words.
 ProcedureRAM VideoGraphicsRun()
-  Protected i.i, byte.i, k.i, c.i, s.i, shift.i, mask.i, ppb.i, x.i, src.i, base.i, bpp.i, scale.i
-  x = VxX : src = VxSrc : base = VxBase : bpp = VdBpp : scale = VdScale
+  Protected i.i, byte.i, k.i, c.i, s.i, shift.i, mask.i, ppb.i, x.i, src.i, base.i, bpp.i, scale.i, words.i, dst.i
+  x = VxX : src = VxSrc : base = VxBase : bpp = VdBpp : scale = VdScale : words = VxWords
+  If words
+    dst = @VideoSamples(x)
+    For i = 0 To VxCount - 1
+      byte = PeekA(src + i) * 4
+      For k = 0 To words - 1
+        PokeL(dst, VideoLut(byte + k)) : dst = dst + 4
+      Next
+    Next
+    VxX = x + VxCount * words * 4
+    ProcedureReturn
+  EndIf
   ppb = 8 / bpp
   mask = (1 << bpp) - 1
   For i = 0 To VxCount - 1
@@ -63,4 +75,15 @@ EndProcedure
 ProcedureRAM VideoFill(index.i)
   Protected x.i
   For x = 0 To 639 : VideoSamples(x) = index : Next
+EndProcedure
+
+; The CRC-32 (reflected, $EDB88320) of VxCount bytes at VxSrc, carried on from VxHash, into VxHash
+; (no final inversion: the result is only compared with itself).
+ProcedureRAM VideoCrc()
+  Protected i.i, c.l, src.i, n.i
+  c = VxHash : src = VxSrc : n = VxCount
+  For i = 0 To n - 1
+    c = VideoCrcTab((c ! PeekA(src + i)) & 255) ! ((c >> 8) & $FFFFFF)
+  Next
+  VxHash = c
 EndProcedure

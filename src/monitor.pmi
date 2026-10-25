@@ -9,6 +9,7 @@ Procedure CocoCapture()
   Protected line.i, x.i
   CocoParkVideo(1)
   Say("CAP_BEGIN w=480 h=240") : Eol()
+  VideoDecode()                          ; (VideoRenderLine draws with the registers decoded once a picture)
   For line = 0 To #VIDEO_LINES - 1
     VideoRenderLine(line)
     For x = 0 To 479
@@ -34,16 +35,19 @@ Procedure CocoStatus(now.i)
   Say(" cpu_khz=") : Num(cycles / (dt / 1000))
   Say(" fast=") : Num(CocoFast)
   ; the share of wall time the emulation needed: under 100 it keeps up with a real CoCo 3
-  Say(" busy_pct=") : Num((run / (dt / 1000)) / 10)
+  Say(" core0_busy_pct=") : Num((run / (dt / 1000)) / 10)
   Say(" pc=") : Num(CocoCpuPc())
   Say(" video_fps_x10=") : Num(((VideoFrames - CocoStatVideo) * 10000) / (dt / 1000))
+  ; core 1: the share of wall time it spent drawing, and the lines it drew again (keys changed) a second
+  Say(" core1_busy_pct=") : Num(((VideoBusyUs - CocoStatBusy1) / (dt / 1000)) / 10)
+  Say(" lines_drawn_s=") : Num(((VideoLinesDrawn - CocoStatLines) * 1000) / (dt / 1000))
   Say(" rows_sent=") : Num(VideoRowsSent)
   Say(" keys=") : Num(KeyTyped) : Say(" queued=") : Num(KeyPending())
   Say(" sound_samples=") : Num(SoundSamples) : CocoAudioReport()
   Say(" late=") : Num(CocoLate)
   Eol()
   CocoStatAt = now : CocoStatFrames = CocoFrames : CocoStatCycles = CpuCycles
-  CocoStatRun = CocoRunUs : CocoStatVideo = VideoFrames
+  CocoStatRun = CocoRunUs : CocoStatVideo = VideoFrames : CocoStatBusy1 = VideoBusyUs : CocoStatLines = VideoLinesDrawn
 EndProcedure
 
 ; ---------------------------------------------------------------- input from the host
@@ -126,7 +130,7 @@ Procedure CocoRun()
   ForEver
 EndProcedure
 
-Procedure CocoLineHook()
+ProcedureRAM CocoLineHook()
   If (CocoLine & 15) = 0
     CocoBoardService()
   EndIf

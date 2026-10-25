@@ -36,14 +36,35 @@ Global VideoForce.i, VideoFrames.i, VideoRowsSent.i, VideoLastPal.i = -1
 Global VideoPalSerial.i = -1, VideoPalBorder.i = -1   ; what VideoPal was last looked up from
 
 Declare VideoSendRow(y.i, pixels.i)
+Declare VideoSendDone()                 ; the picture's last row has gone (a board that sends by DMA waits here)
 
 ; The inner loops: video_portable.pmi (PureMetal: RP2040, the PC) or video_t2.pmi (Thumb-2: RP2350),
 ; included after this file. Their inputs are these Globals.
-Global VxGlyph.i, VxFg.i, VxBg.i, VxScale.i, VxX.i, VxSrc.i, VxCount.i, VxBase.i, VxHash.l
+Global VxGlyph.i, VxFg.i, VxBg.i, VxScale.i, VxX.i, VxSrc.i, VxCount.i, VxBase.i, VxHash.l, VxWords.i
+; A graphics byte's samples, looked up: entry b (16 bytes at VideoLut(b * 4)) holds the 4, 8 or 16 samples
+; byte b becomes in the current mode, VxWords words of them (0: the mode has another count, and the
+; kernels work it out pixel by pixel). Built again only when bits a pixel, samples a pixel or the
+; palette base change (VideoLutBuild).
+Global Dim VideoLut.l(1024)
+Global VideoLutKey.i = -1
 Declare.l VideoScaleOut()
 Declare VideoBits()
 Declare VideoGraphicsRun()
 Declare VideoFill(index.i)
+Declare VideoCrc()
+
+; WHICH LINES TO DRAW. A line is drawn again only when what it is drawn from changed: a CRC-32 of its
+; place and mode (VideoKeyBuf), the palette serial, the border and its source bytes, kept per line in
+; VideoKey (a CRC, not the bytes: the RP2040 has 25 KB of SRAM to spare, not 38). Every #VIDEO_RECHECK
+; frames every line is drawn whatever its key says, and sent only if its pixels differ, so a change a
+; CRC could miss is on the panel within a second. The re-drawing is spread: #VIDEO_LINES / #VIDEO_RECHECK
+; lines a picture (all of them at once cost the RP2040 a 60 ms picture, three frames, every second).
+#VIDEO_RECHECK = 60
+Global Dim VideoCrcTab.l(256)
+Global Dim VideoKey.l(240)
+Global Dim VideoKeyBuf.l(8)
+Global VideoKeyFrames.i, VideoBusyUs.i, VideoLinesDrawn.i
+Global VlIn.i, VlAddr.i, VlRow.i, VlOffset.i
 Declare CocoAudioPoll()                 ; core 1 keeps the speaker going between lines
 
 Procedure VideoInit()
@@ -61,6 +82,13 @@ Procedure VideoInit()
     VideoColorRgb(c) = (r << 16) | (g << 8) | b
   Next
   For i = 0 To 479 : VideoMap(i) = (i * 4) / 3 : Next
+  For i = 0 To 255
+    t = i
+    For c = 1 To 8
+      If t & 1 : t = ((t >> 1) & $7FFFFFFF) ! $EDB88320 : Else : t = (t >> 1) & $7FFFFFFF : EndIf
+    Next
+    VideoCrcTab(i) = t
+  Next
   For i = 0 To 239
     VideoRowFirst(i) = (i * 4 + 2) / 3
     VideoRowCount(i) = ((i + 1) * 4 + 2) / 3 - VideoRowFirst(i)
@@ -156,11 +184,36 @@ Procedure VideoBorderLine(index.i)
 EndProcedure
 
 ; GIME graphics: VdBytes bytes of VdBpp bits per pixel, each pixel VdScale samples wide.
+; The look-up table for VdBpp bits a pixel, VdScale samples a pixel, palette base `base`: `s` samples a byte.
+Procedure VideoLutBuild(base.i, s.i)
+  Protected b.i, k.i, j.i, c.i, shift.i, mask.i, ppb.i, w.i, sample.i
+  ppb = 8 / VdBpp : mask = (1 << VdBpp) - 1
+  For b = 0 To 255
+    For w = 0 To 3 : VideoLut(b * 4 + w) = 0 : Next
+    j = 0 : shift = 8 - VdBpp
+    For k = 1 To ppb
+      c = base + ((b >> shift) & mask)
+      For sample = 1 To VdScale
+        VideoLut(b * 4 + j / 4) = VideoLut(b * 4 + j / 4) | (c << ((j & 3) * 8))
+        j = j + 1
+      Next
+      shift = shift - VdBpp
+    Next
+  Next
+EndProcedure
+
 ; The bytes are taken in runs that are contiguous in SRAM: a run ends where the horizontal offset wraps
 ; at 256 bytes or where an 8 KB page of the GIME's memory ends.
 Procedure VideoGraphics(addr.i, offset.i, base.i)
-  Protected i.i, a.i, n.i, left.i
+  Protected i.i, a.i, n.i, left.i, s.i, key.i
   VxX = VdLeft : VxBase = base
+  s = (8 / VdBpp) * VdScale
+  VxWords = 0
+  If s = 4 Or s = 8 Or s = 16
+    key = VdBpp | (VdScale << 4) | (base << 12)
+    If key <> VideoLutKey : VideoLutBuild(base, s) : VideoLutKey = key : EndIf
+    VxWords = s / 4
+  EndIf
   i = 0
   While i < VdBytes
     a = addr + ((offset + i) & $FF)
@@ -265,12 +318,39 @@ Procedure.i VideoLegacyBorder()
   ProcedureReturn 0
 EndProcedure
 
+; Where line `line` (0-239) comes from (VideoDecode done): VlIn 0 for the border, else the address of its
+; row of bytes, the horizontal offset (GIME modes) and the line within its character row.
+Procedure VideoLinePlace(line.i)
+  Protected b.i, rowIndex.i
+  b = line - VdBodyTop
+  If b < 0 Or b >= VdBodyLines
+    VlIn = 0 : VlAddr = 0 : VlRow = 0 : VlOffset = 0
+    ProcedureReturn
+  EndIf
+  VlIn = 1
+  If VdLpr = 255
+    rowIndex = 0 : VlRow = (b + VdScroll) & 15
+  Else
+    rowIndex = (b + VdScroll) / VdLpr : VlRow = (b + VdScroll) % VdLpr
+  EndIf
+  VlAddr = VdBase + rowIndex * VdPitch
+  If VdLegacy : VlOffset = 0 : Else : VlOffset = (Gime($F) & $7F) * 2 : EndIf
+EndProcedure
+
 ; Render source line `line` (0-239) into VideoSamples (640 palette indices, 16 = border) with VideoPal
 ; (the 17 colours, RGB565) and VideoRgb (the same, as 0xRRGGBB for a PC).
 Global Dim VideoRgb.l(17)
+Declare VideoRenderDecoded(line.i)
 Procedure VideoRenderSamples(line.i)
-  Protected b.i, rowIndex.i, row.i, addr.i, x.i, i.i, offset.i, border.i, c.i, serial.i
   VideoDecode()
+  VideoRenderDecoded(line)
+EndProcedure
+
+; The same with the registers already decoded (VideoFrame decodes once a picture: it draws a finished
+; frame, so every line of it sees the same registers - decoding per line cost the RP2040 a third of
+; core 1 on a still screen).
+Procedure VideoRenderDecoded(line.i)
+  Protected x.i, i.i, border.i, serial.i
   If VdLegacy : border = VideoLegacyBorder() : Else : border = Gime($A) & $3F : EndIf
   ; the 17 colours are looked up again only when a palette register or the border changed (they were
   ; looked up for every line: 7 of the 13 ms a pass took on the RP2350 to draw the demo's lines). The
@@ -286,49 +366,84 @@ Procedure VideoRenderSamples(line.i)
     VideoPal(16) = VideoColor(border) : VideoRgb(16) = VideoColorRgb(border)
     VideoPalBorder = border
   EndIf
-  b = line - VdBodyTop
-  If b < 0 Or b >= VdBodyLines
+  VideoLinePlace(line)
+  If VlIn = 0
     VideoBorderLine(16)
   Else
-    If VdLpr = 255
-      rowIndex = 0 : row = (b + VdScroll) & 15
-    Else
-      rowIndex = (b + VdScroll) / VdLpr : row = (b + VdScroll) % VdLpr
-    EndIf
-    addr = VdBase + rowIndex * VdPitch
     If VdLeft
       For x = 0 To 63 : VideoSamples(x) = 16 : VideoSamples(x + 576) = 16 : Next
     EndIf
     If VdLegacy
-      If VdText : VideoVdgText(addr, row) : Else : VideoVdgGraphics(addr) : EndIf
+      If VdText : VideoVdgText(VlAddr, VlRow) : Else : VideoVdgGraphics(VlAddr) : EndIf
     Else
-      offset = (Gime($F) & $7F) * 2
-      If VdText : VideoGimeText(addr, offset, row) : Else : VideoGraphics(addr, offset, 0) : EndIf
+      If VdText : VideoGimeText(VlAddr, VlOffset, VlRow) : Else : VideoGraphics(VlAddr, VlOffset, 0) : EndIf
     EndIf
   EndIf
 EndProcedure
 
+; The key of line `line` (VideoDecode done): its place and mode, the palette serial, the border, and
+; the bytes it is drawn from, read in runs contiguous in SRAM as VideoGraphics reads them.
+Procedure.l VideoLineKey(line.i)
+  Protected n.i, i.i, a.i, cnt.i, left.i, border.i
+  If VdLegacy : border = VideoLegacyBorder() : Else : border = Gime($A) & $3F : EndIf
+  VideoLinePlace(line)
+  VideoKeyBuf(0) = GimePalSerial : VideoKeyBuf(1) = border : VideoKeyBuf(2) = VlIn
+  VideoKeyBuf(3) = VlAddr : VideoKeyBuf(4) = VlOffset | (VlRow << 16)
+  VideoKeyBuf(5) = VdLegacy | (VdText << 1) | (VdAttr << 2) | (VdBpp << 4) | (VdLeft << 8) | (VdScale << 16)
+  VideoKeyBuf(6) = VdBytes | (VdFF22 << 8) | ((Gime(8) & 7) << 16)
+  VideoKeyBuf(7) = 0
+  n = 0
+  If VlIn
+    n = VdBytes
+    If VdLegacy = 0 And VdText And VdAttr : n = VdBytes * 2 : VideoKeyBuf(7) = GimeBlink : EndIf
+  EndIf
+  VxHash = -1 : VxSrc = @VideoKeyBuf(0) : VxCount = 32
+  VideoCrc()
+  i = 0
+  While i < n
+    a = VlAddr + ((VlOffset + i) & $FF)
+    cnt = n - i
+    left = 256 - ((VlOffset + i) & $FF) : If cnt > left : cnt = left : EndIf
+    left = $2000 - (a & $1FFF) : If cnt > left : cnt = left : EndIf
+    VxSrc = CocoPhys(a) : VxCount = cnt
+    VideoCrc()
+    i = i + cnt
+  Wend
+  ProcedureReturn VxHash
+EndProcedure
+
 ; Render source line `line` into VideoOut (480 RGB565 pixels for the panel). Returns the line's hash.
 Procedure.l VideoRenderLine(line.i)
-  VideoRenderSamples(line)
+  VideoRenderDecoded(line)
   ProcedureReturn VideoScaleOut()
 EndProcedure
 
-; One pass over the picture: render every line, send the ones that changed.
+; One picture: draw the lines whose key changed (all of them every #VIDEO_RECHECK pictures, or when
+; VideoForce asks), send the ones whose pixels changed.
 Procedure VideoFrame()
-  Protected line.i, h.l, k.i, force.i
+  Protected line.i, h.l, k.i, force.i, all.i, key.l
   force = VideoForce : VideoForce = 0
+  all = force
+  VideoKeyFrames = VideoKeyFrames + 1
+  If VideoKeyFrames >= #VIDEO_RECHECK : VideoKeyFrames = 0 : EndIf
+  VideoDecode()
   For line = 0 To #VIDEO_LINES - 1
-    h = VideoRenderLine(line)
-    If force Or h <> VideoHash(line)
-      VideoHash(line) = h
-      For k = 0 To VideoRowCount(line) - 1
-        VideoSendRow(VideoRowFirst(line) + k, @VideoOut(0))
-        VideoRowsSent = VideoRowsSent + 1
-      Next
+    key = VideoLineKey(line)
+    If all Or key <> VideoKey(line) Or (line % #VIDEO_RECHECK) = VideoKeyFrames
+      VideoKey(line) = key
+      h = VideoRenderLine(line)
+      VideoLinesDrawn = VideoLinesDrawn + 1
+      If force Or h <> VideoHash(line)
+        VideoHash(line) = h
+        For k = 0 To VideoRowCount(line) - 1
+          VideoSendRow(VideoRowFirst(line) + k, @VideoOut(0))
+          VideoRowsSent = VideoRowsSent + 1
+        Next
+      EndIf
     EndIf
     CocoAudioPoll()
   Next
+  VideoSendDone()
   VideoFrames = VideoFrames + 1
 EndProcedure
 

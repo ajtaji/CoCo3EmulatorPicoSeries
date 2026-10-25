@@ -20,6 +20,8 @@ Procedure CocoPutc(c.i)
   HostOut(Chr(c))
 EndProcedure
 
+Procedure VideoSendDone()
+EndProcedure
 Procedure VideoSendRow(y.i, pixels.i)    ; the panel's (video.pmi's VideoFrame); the PC draws through ScreenRender
 EndProcedure
 Procedure CocoLineHook()

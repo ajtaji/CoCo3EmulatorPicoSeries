@@ -162,8 +162,11 @@ Procedure CocoMapAll()
   Next
 EndProcedure
 
+; CORE 0'S PER-SCANLINE PATH RUNS FROM SRAM (ProcedureRAM here, in coco3.pmi's CocoFrame, the glue and
+; sound.pmi): from flash it shared the XIP cache with core 1's drawing, and core 0 ran 13% slower on the
+; Feather RP2350 whenever core 1 drew (3,417 -> 3,978 kHz unthrottled from SRAM; Pico W 3,413 -> 3,582).
 ; Physical address (the GIME's 512 KB space, taken modulo the RAM fitted) to an SRAM address.
-Procedure.i CocoPhys(addr.i)
+ProcedureRAM.i CocoPhys(addr.i)
   ProcedureReturn CocoPageBase((addr >> 13) & (#COCO_RAM_PAGES - 1)) + (addr & $1FFF)
 EndProcedure
 
@@ -193,7 +196,7 @@ EndProcedure
 
 ; ---------------------------------------------------------------- interrupts
 
-Procedure CocoUpdateLines()
+ProcedureRAM CocoUpdateLines()
   Protected irq.i, firq.i
   ; PIA0 drives IRQ, PIA1 drives FIRQ: CRx bit 7 with bit 0, bit 6 with bit 3 when C2 is an input.
   irq = Bool((PiaCrA(0) & $81) = $81 Or (PiaCrB(0) & $81) = $81)
@@ -211,7 +214,7 @@ Procedure CocoUpdateLines()
 EndProcedure
 
 ; A rising edge on a GIME interrupt source.
-Procedure GimeEdge(source.i)
+ProcedureRAM GimeEdge(source.i)
   If Gime(2) & source : GimeIrqPending = GimeIrqPending | source : EndIf
   If Gime(3) & source : GimeFirqPending = GimeFirqPending | source : EndIf
   CocoUpdateLines()
@@ -219,7 +222,7 @@ EndProcedure
 
 ; An active transition on a PIA's C1 input (CA1 when b = 0, CB1 when b = 1). falling = 1 for a
 ; high-to-low edge. CRx bit 1 chooses the active edge: 0 falling, 1 rising.
-Procedure PiaC1(p.i, b.i, falling.i)
+ProcedureRAM PiaC1(p.i, b.i, falling.i)
   If b
     If Bool((PiaCrB(p) & 2) = 0) = falling : PiaCrB(p) = PiaCrB(p) | $80 : EndIf
   Else
@@ -240,7 +243,7 @@ EndProcedure
 ; and the cycles the CPU window in progress has used beyond CocoFolded (cycles of this window already
 ; added to CocoLinePos, at the rate they ran at, when the speed changed part way through it).
 Global CocoLinePos.i, CocoFolded.i
-Procedure.i CocoTime()
+ProcedureRAM.i CocoTime()
   ProcedureReturn GimeNow + CocoLinePos + (CocoCpuElapsed() - CocoFolded) * CocoCycleClocks
 EndProcedure
 
@@ -260,7 +263,7 @@ EndProcedure
 ; Called at every line boundary (and may be called more often). Expiries in the 279 ns mode can be
 ; many per line; each one is an interrupt edge, but the CPU sees at most one per line here, which
 ; is what a program polling or taking the interrupt can observe anyway.
-Procedure GimeTimerRun(now.i)
+ProcedureRAM GimeTimerRun(now.i)
   If GimeTimerOn = 0 : ProcedureReturn : EndIf
   If now - GimeTimerDue >= 0
     While now - GimeTimerDue >= 0
@@ -274,7 +277,7 @@ EndProcedure
 ; ---------------------------------------------------------------- PIAs
 
 ; Port A inputs of PIA0: the keyboard rows and the joystick comparator.
-Procedure.i Pia0InputA()
+ProcedureRAM.i Pia0InputA()
   Protected cols.i, rows.i, c.i, dac.i, mux.i
   cols = PiaOutB(0) | (~PiaDdrB(0) & $FF)  ; an input line floats high
   rows = 0
@@ -294,7 +297,7 @@ Procedure.i Pia0InputA()
   ProcedureReturn rows
 EndProcedure
 
-Procedure.i PiaRead(p.i, reg.i)
+ProcedureRAM.i PiaRead(p.i, reg.i)
   Protected v.i, inp.i
   If reg = 0
     If PiaCrA(p) & 4
@@ -330,7 +333,7 @@ Procedure.i PiaRead(p.i, reg.i)
   ProcedureReturn PiaCrB(p)
 EndProcedure
 
-Procedure PiaWrite(p.i, reg.i, v.i)
+ProcedureRAM PiaWrite(p.i, reg.i, v.i)
   If reg = 0
     If PiaCrA(p) & 4 : PiaOutA(p) = v : Else : PiaDdrA(p) = v : EndIf
     If p = 1 : CocoDac = (PiaOutA(1) >> 2) & 63 : CocoSoundChanged() : EndIf
@@ -350,7 +353,7 @@ EndProcedure
 
 ; The level the sound output is at: the DAC when SNDEN is on and the mux selects it (SEL1 = SEL2 = 0),
 ; plus the single-bit sound. 0-63.
-Procedure.i CocoSoundLevel()
+ProcedureRAM.i CocoSoundLevel()
   Protected level.i
   level = 0
   If CocoSoundOn And (PiaCrA(0) & $08) = 0 And (PiaCrB(0) & $08) = 0
@@ -365,7 +368,7 @@ EndProcedure
 
 ; ---------------------------------------------------------------- GIME and SAM registers
 
-Procedure GimeWrite(reg.i, v.i)
+ProcedureRAM GimeWrite(reg.i, v.i)
   Protected old.i
   old = Gime(reg) : Gime(reg) = v
   Select reg
@@ -386,7 +389,7 @@ Procedure GimeWrite(reg.i, v.i)
   EndSelect
 EndProcedure
 
-Procedure SamWrite(offset.i)
+ProcedureRAM SamWrite(offset.i)
   Protected bit.i, old.i, done.i
   old = SamBits
   bit = 1 << (offset >> 1)
@@ -412,7 +415,7 @@ EndProcedure
 Declare.i CocoDiskRead(reg.i)
 Declare CocoDiskWrite(reg.i, v.i)
 
-Procedure.i CocoBusRead(a.i)
+ProcedureRAM.i CocoBusRead(a.i)
   Protected v.i
   If a < $FF00
     ProcedureReturn PeekA(CocoFeRead + (a & $FF))
@@ -444,7 +447,7 @@ Procedure.i CocoBusRead(a.i)
   ProcedureReturn PeekA(CocoRom + $7FE0 + (a & $1F))
 EndProcedure
 
-Procedure CocoBusWrite(a.i, v.i)
+ProcedureRAM CocoBusWrite(a.i, v.i)
   v = v & $FF
   If a < $FF00
     ProcedureReturn                      ; $FE00-$FEFF is mapped memory; it never comes here
@@ -523,7 +526,7 @@ EndProcedure
 ; End the current scanline: move time on by one line and raise what happens at its boundary. The
 ; caller has already taken #GIME_LINE_CLOCKS off CocoLinePos (what is left is the last instruction's
 ; overshoot into the new line).
-Procedure CocoEndLine()
+ProcedureRAM CocoEndLine()
   Protected bottom.i
   GimeNow = GimeNow + #GIME_LINE_CLOCKS
   CocoLine = CocoLine + 1
@@ -547,10 +550,10 @@ Procedure CocoEndLine()
 EndProcedure
 
 ; The core's I/O hooks: page $FF only.
-Procedure.i CpuBusRead(addr.i)
+ProcedureRAM.i CpuBusRead(addr.i)
   ProcedureReturn CocoBusRead(addr)
 EndProcedure
 
-Procedure CpuBusWrite(addr.i, value.i)
+ProcedureRAM CpuBusWrite(addr.i, value.i)
   CocoBusWrite(addr, value)
 EndProcedure

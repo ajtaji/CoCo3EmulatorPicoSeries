@@ -33,7 +33,7 @@ Procedure SoundStart()
   SoundPer = 596 : SoundMark = SoundNext - SoundPer : SoundAcc = 0
 EndProcedure
 
-Procedure SoundCatchUp(now.i)
+ProcedureRAM SoundCatchUp(now.i)
   Protected v.i, x.i
   If SoundOn = 0 : ProcedureReturn : EndIf
   While now - SoundNext >= 0
@@ -59,7 +59,7 @@ Procedure SoundCatchUp(now.i)
 EndProcedure
 
 ; Called by the PIAs whenever a register the output depends on is written.
-Procedure CocoSoundChanged()
+ProcedureRAM CocoSoundChanged()
   Protected level.i, now.i
   now = CocoTime()
   SoundCatchUp(now)
