@@ -110,6 +110,25 @@ status line read over USB by `tools/board.py`; the scripts are in `tests/`.
   is unchanged): Feather RP2350 unthrottled **3,525 -> 3,736 kHz (4.17x a real CoCo 3) at 0.89 MHz and
   4,255 -> 4,560 kHz (2.55x) at 1.79 MHz**, core 0 24% busy paced at 0.89 MHz, 39% at 1.79; BASIC, the
   TIMER loop (910) and the demo pass. From both: 3,420 -> 3,736 kHz and 4,235 -> 4,560 kHz on the RP2350.
+- **60 pictures a second, both cores working (2026-10-25, `ef95149`).** Core 1 now draws each finished frame
+  once (59.92 a second, the CoCo 3's own rate) and only the lines whose inputs changed (a CRC-32 key per
+  line), core 0's per-scanline path runs from SRAM, graphics bytes expand through a look-up table, and the
+  Pico 2 boards send panel rows by DMA while the next line is drawn. The status line gives each core's busy
+  share. Same tests (`speed`, `demo`, `basic_boot`, `timer`, `video_modes`, `vcheck`, `p2w_panel`), compiler
+  `883c4ae12`, 6809 core `25cde43`:
+
+  | board | BASIC, pictures/s | core 0 / core 1 busy (BASIC, 0.89 MHz) | the demo, pictures/s (core 1) | unthrottled 0.89 / 1.79 MHz |
+  |---|---:|---:|---:|---:|
+  | **Pico 2 W + panel** (COM6) | **59.9** | 19% / 14% | 44.5 (98%) | - |
+  | Feather RP2350, no panel (COM20) | **59.9** | 17-22% / 14% | **59.9** (75%) | 3,979 / 4,862 kHz |
+  | **Pico W + panel** (COM7, RP2040) | **59.9** | 21% / 40% | 13.7 (100%) | 3,585 / 4,490 kHz |
+
+  The demo rolls its palette every second frame, so every band - most of the picture - changes: on the
+  Pico 2 W the panel's SPI (75 MHz, half the 150 MHz clock) carries about 75 changed rows a picture at
+  102 us each, and core 1 waits for it; on the Pico W the drawing itself is the limit. BASIC (a still or
+  slowly changing screen) is at the full 59.92 on every board. The Pico 2 W build takes its ROMs and the
+  demo disk over USB into SRAM at boot (`rp2350/coco3.pico2w`, `tests/p2w_panel.txt`): a shared board's
+  flash is full.
 - Disk: on a blank disk in flash a typed program is SAVEd, wiped, LOADed and RUN (`tests/disk.txt`); after
   a reflash and cold boot `DIR` still lists it and it LOADs and RUNs (`tests/disk_persist.txt`).
 
