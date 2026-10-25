@@ -3,6 +3,7 @@
 ; (multicore_smp.pico2). The rest is src/board_common.pmi.
 
 #COCO_CLOCK_KHZ = 150000
+#COCO_PANEL_SPI_KHZ = 100000             ; asked for; at 150 MHz the SPI gets clk_peri / 2 = 75 MHz (boot says so)
 #COCO_ROM_FLASH = $10000000 + #COCO_ROM_OFFSET
 ; The wrapper names the board and its flash: #COCO_BOARD_NAME$, #COCO_ROM_OFFSET, #COCO_DISK_OFFSET,
 ; #COCO_DISK_FLASH_SLOTS, #COCO_BTKEY_FLASH, #COCO_HEADLESS (coco3.pico2w: a Pico 2 W with the LAFVIN
@@ -11,7 +12,7 @@
 Procedure VideoBegin()
   CompilerIf #COCO_HEADLESS = 0
     SpiPeriFromSys(ClockSysConfigKhz())
-    SpiBegin(0, 2, 3, -1, 100000)
+    SpiBegin(0, 2, 3, -1, #COCO_PANEL_SPI_KHZ)
     Tft796Begin(0, 5, 6, 7) : Tft796Rotate(1) : Tft796Fill(0)
   CompilerEndIf
 EndProcedure

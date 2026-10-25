@@ -16,6 +16,7 @@
 #COCO_DISK_OFFSET = $150000
 #COCO_DISK_FLASH_SLOTS = 4
 #COCO_HEADLESS = 0
+#COCO_PANEL_SPI_KHZ = 100000             ; the panel's SPI clock asked for (clk_peri / 2 at most: 100 MHz here)
 #COCO_PANEL_ASYNC = 1                    ; rows go out by DMA while the next line is drawn (board_common.pmi)
 #COCO_DMA_TREQ_SHIFT = 15                ; the RP2040's DMA CTRL TREQ_SEL field (spi.pico's SpiDmaSend16)
 #COCO_SRAM_IMAGES = 0                    ; the ROMs and disks are in flash (the RP2040 has no SRAM to spare)
@@ -24,7 +25,7 @@
 
 Procedure VideoBegin()
   SpiPeriFromSys(200000)
-  SpiBegin(0, 2, 3, -1, 100000)
+  SpiBegin(0, 2, 3, -1, #COCO_PANEL_SPI_KHZ)
   Tft796Begin(0, 5, 6, 7) : Tft796Rotate(1) : Tft796Fill(0)
 EndProcedure
 

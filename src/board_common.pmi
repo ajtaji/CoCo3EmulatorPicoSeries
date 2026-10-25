@@ -282,6 +282,14 @@ Procedure CocoBoot()
   Say("disks:") : For MainT = 0 To #DISK_SLOTS - 1 : Say(" ") : Num(Bool(DiskBase(MainT) <> 0)) : Next : Eol()
   VideoBegin()
   Say("spi_hz=") : Num(SpiHz(0)) : Eol()
+  ; the SPI library quietly takes the nearest clock it can make (clk_peri / 2 at most): say when the panel
+  ; got less than was asked (a Pico 2 W at 150 MHz asks 100 MHz and gets 75 - Ron was never told)
+  CompilerIf #COCO_HEADLESS = 0
+    If SpiHz(0) < #COCO_PANEL_SPI_KHZ * 1000
+      Say("NOTE: the panel's SPI runs at ") : Num(SpiHz(0) / 1000000) : Say(" MHz, not the ") : Num(#COCO_PANEL_SPI_KHZ / 1000)
+      Say(" MHz asked for: the SPI clock is at most clk_peri / 2 (clk_khz=") : Num(ClockSysKhz()) : Say(")") : Eol()
+    EndIf
+  CompilerEndIf
   Say("core1 launch=") : Num(CocoLaunchCore1()) : Eol()
   CocoAudioBegin(#COCO_BTKEY_FLASH)
   MainT = Micros()
