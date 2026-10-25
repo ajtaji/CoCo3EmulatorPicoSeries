@@ -1,14 +1,13 @@
 ; Tandy Color Computer 3 for the Adafruit Feather RP2350 HSTX (the same RP2350A as a Pico 2 W; the Pico 2 W
 ; build runs on it): 128 KB of CoCo RAM, NO panel - the picture is read over USB (monitor c), the keyboard
-; over USB serial. Flash ranges agreed for COM20 (BOARDS.md) between the PDP-11's packs.
+; over USB serial. Its flash ranges leave room for other programs' stores on the same 8 MB board.
 ; The ROMs come from the coco_rom flash region (tools/make_rom_region.py); none are in this image.
 #CPU_TIMING = 1
 #CPU_ASM_TAIL = 1
 #VIDEO_RGB = 0
 #COCO_AUDIO = 0                          ; the public firmware names no speaker: no sound
 #COCO_BOARD_NAME$ = "Feather RP2350 HSTX"
-; COM20's 8 MB flash (BOARDS.md): the Amiga's Kickstart from $40000 and DF0 from $C0000, the PDP-11's RK0
-; pack $240000-$4A1FFF, RK1/RP03 $4C0000-$6B4FFF and its store $700000-$7FFFFF. The CoCo 3 takes the gaps:
+; The 8 MB flash is shared with other programs' stores on the board this was proven on; the CoCo 3 takes
 ; the ROM region $4A2000-$4BFFFF (make_rom_region.py --target rp2350 --offset 0x4A2000) and ONE disk slot
 ; at $6B5000-$6DCFFF of the $6B5000-$6FFFFF gap (make_disk_region.py --target rp2350 --offset 0x6B5000).
 #COCO_ROM_OFFSET = $4A2000

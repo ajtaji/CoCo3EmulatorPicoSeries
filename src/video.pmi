@@ -430,7 +430,7 @@ EndProcedure
 ; (every line once a second), all of them when VideoForce asks - and send every line drawn. (A line was
 ; sent only when a rotate-and-add hash of its pixels changed, and that hash is the same, $FFFFFFF8, for
 ; every one-colour line whatever its colour: the demo's colour bands stood still on the panels while the
-; letters' rows moved (Ron saw it, 2026-10-25). No pixel hash is trusted now: a line's inputs decide.)
+; letters' rows moved. No pixel hash is trusted now: a line's inputs decide.)
 Procedure VideoFrame()
   Protected line.i, k.i, all.i, key.l
   all = VideoForce : VideoForce = 0

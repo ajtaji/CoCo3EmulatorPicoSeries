@@ -1,4 +1,4 @@
-# The Pico 2 W with the LAFVIN panel (rp2350/coco3.pico2w: ROMs and the demo disk sent over USB into SRAM -
+# The Pico 2 W with the LAFVIN panel (rp2350/coco3_usbimages.pico2w: ROMs and the demo disk sent over USB into SRAM -
 # a shared board's flash is full). BASIC, the TIMER loop, the demo; the status lines give the panel's
 # frame rate (video_fps_x10) and each core's busy share (core0_busy_pct, core1_busy_pct).
 #   make_rom_region.py --target rp2350 --offset 0 --bin build/p2w_rom.bin ...

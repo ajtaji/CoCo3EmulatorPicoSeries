@@ -8,7 +8,7 @@
 ;       [/CONSTANT COCO_CPU_DIR$=C:/path/to/6809EmulatorPicoSeries/desktop/]   (default: beside this repo)
 ; RUN:
 ;   CoCo3.exe [--rom coco3.rom] [--cart disk11.rom|--no-cart] [--disk0 file.dsk ... --disk3] [--new-disk0 file.dsk]
-;       the window. The ROMs default to C:\PMFBuild\coco_roms_build (tools/build_roms.ps1 makes them).
+;       the window. The ROMs default to a folder roms beside CoCo3.exe (tools/build_roms.ps1 leaves them in build\roms).
 ;   CoCo3.exe ... --log N [--type "text"] [--fast]   no window: N frames, a status line a second, the
 ;       screen as text at the end (--type types into the CoCo after boot, \n for ENTER).
 ;   CoCo3.exe ... --shot file.png N [--type "text"]  the window for N frames, then its picture, then exit.
@@ -21,7 +21,7 @@
 EnableExplicit
 
 CompilerIf Not Defined(GL_ENGINE_DIR$, #PB_Constant)
-  #GL_ENGINE_DIR$ = "C:/Users/ajtaj/Desktop/Neon-Arcade-Dispay-Engine/"
+  #GL_ENGINE_DIR$ = #PB_Compiler_FilePath + "../../Neon-Arcade-Dispay-Engine/"   ; cloned beside this repository
 CompilerEndIf
 XIncludeFile #GL_ENGINE_DIR$ + "GlTypes.pbi"
 XIncludeFile #GL_ENGINE_DIR$ + "GlUtilities.pbi"
@@ -518,7 +518,7 @@ EndProcedure
 
 ; ---------------------------------------------------------------- start
 
-Define i.i, a$, rom$ = "C:\PMFBuild\coco_roms_build\coco3.rom", cart$ = "C:\PMFBuild\coco_roms_build\disk11.rom"
+Define i.i, a$, rom$ = GetPathPart(ProgramFilename()) + "roms\coco3.rom", cart$ = GetPathPart(ProgramFilename()) + "roms\disk11.rom"
 Define logFrames.i = -1, err$, d.i
 Dim diskArg$(3) : Dim newDisk$(3)
 For i = 0 To CountProgramParameters() - 1

@@ -1,7 +1,7 @@
 # Build the desktop CoCo 3 and prove it in console runs: BASIC boots and runs a typed program, BASIC's own
 # 10-second loop count, and a .DSK file saved, then loaded and run by a second session. Exit 1 on a failure.
-#   tools\desktop_check.ps1 [-Rom C:\PMFBuild\coco_roms_build]
-param([string]$Rom = 'C:\PMFBuild\coco_roms_build', [switch]$NoBuild)
+#   tools\desktop_check.ps1 [-Rom <folder with coco3.rom and disk11.rom>]   (default: build\roms, as build_roms.ps1 leaves them)
+param([string]$Rom = (Join-Path (Split-Path $PSScriptRoot -Parent) 'build\roms'), [switch]$NoBuild)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $exe = Join-Path $root 'build\CoCo3.exe'

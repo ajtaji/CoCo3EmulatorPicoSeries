@@ -1,191 +1,197 @@
-# Tandy Color Computer 3 for the Raspberry Pi Pico series — PureMetal
+# Tandy Color Computer 3 for the Raspberry Pi Pico series
 
-A CoCo 3 emulator for the Pico W (RP2040) and Pico 2 W (RP2350), written in PureMetal and compiled
-with PureMetalForge to bare-metal machine code. The CPU is the computed-goto 6809 core of
-[6809EmulatorPicoSeries](../6809EmulatorPicoSeries) (clone it beside this repository); this repository
-is the machine around it.
+A Tandy Color Computer 3 emulator for the Raspberry Pi Pico W (RP2040) and Pico 2 W (RP2350), written in
+PureMetal and compiled with PureMetalForge to bare-metal machine code - no SDK, no RTOS. It boots Disk
+Extended Color BASIC on a 480 x 320 SPI panel at the CoCo 3's own 59.92 frames a second, with the 6809 on
+one core and the picture on the other. The same machine also runs as a Windows desktop program.
 
-**No ROMs are included.** The CoCo 3 ROM and Disk BASIC are Tandy's. `tools/build_roms.ps1` assembles
-them from the disassembled sources of [tomctomc/coco_roms](https://github.com/tomctomc/coco_roms) (checked
-against the SHA-1s MAME lists) and puts them in the board's flash; the firmware image contains none of them.
+![The PureMetal demo on a Pico 2 W's panel (the firmware's own capture)](docs/pico2w-panel-demo.png)
 
-## What is emulated
+**No ROMs are included.** The CoCo 3 ROM and Disk BASIC are Tandy's and Microsoft's. You supply your own
+copies (see [ROMs](#roms)); the firmware contains none of them. The bundled demo disk holds only a program
+written in PureMetal.
 
-| Part | State |
-|---|---|
-| GIME MMU: 8 KB pages, two task register sets, MMU on/off, ROM modes (16K/16K, 32K internal, 32K external), the $FExx constant page, all-RAM mode (SAM TY) | written |
-| GIME video: text 32/40/64/80 columns with attributes (colours, blink, underline), graphics 16-160 bytes a row in 2/4/16 colours, 192/200/225 lines, the palette, border, vertical scroll, horizontal offset and virtual width | run on the board (diagnostic, every mode captured) |
-| VDG-compatible modes (CoCo 1/2 software): 32 x 16 text with MC6847T1 lower case, semigraphics 4, the CG and RG graphics modes, SAM display offset | written |
-| GIME interrupts: timer (63.5 us and 279 ns inputs), HBORD, VBORD, keyboard (EI1); IRQ and FIRQ routing; PIA0 HSYNC/VSYNC interrupts; PIA1 FIRQ | written |
-| PIA0: keyboard matrix (with ALT, CTRL, F1, F2), joystick comparator and mux; PIA1: 6-bit DAC, single-bit sound, SNDEN, RAM size sense | written |
-| 0.89 / 1.79 MHz ($FFD8/$FFD9), paced to the real machine's 59.92 frames a second (262 lines of 1824 GIME clocks) | run on the board (both speeds measured) |
-| FD-502 disk controller: DSKREG and a WD1793, four .DSK drives in flash, writes kept | run on the board: DIR, SAVE, LOAD |
-| Sound to a Bluetooth speaker | partly run: the private build connected and streamed BASIC's SOUND (455 packets), then the stream stalled with the link still up; the next start found no speaker (page timeout). Open |
-| Cassette, RS-232, cartridge autostart, joystick hardware | not emulated |
+## Features
 
-Guest RAM is **128 KB** on both boards. 512 KB does not fit: on the Pico W the 6809 core's code takes
-about 85 KB of the 264 KB SRAM (it runs from SRAM for speed); on the Pico 2 W 128 KB leaves 287 KB,
-less than the 384 KB more a 512 KB machine needs. A PSRAM board (Pimoroni Pico Plus 2 W) is where a
-512 KB CoCo 3 would go.
+- **The CoCo 3:** the GIME's MMU (8 KB pages, two task sets, ROM modes, the constant $FExx page), every
+  GIME text and graphics mode (32-80 columns with attributes, 16-160 bytes a row in 2, 4 and 16 colours,
+  192/200/225 lines, palette, border, scroll, horizontal offset), the MC6847-compatible modes CoCo 1 and 2
+  software uses, the GIME timer and its interrupts, both PIAs (keyboard matrix with ALT, CTRL, F1, F2,
+  joystick comparator, 6-bit DAC, single-bit sound), 0.89 and 1.79 MHz.
+- **FD-502 disk:** a WD1793 with four drives - `.DSK` images in the board's flash, written back when BASIC
+  saves.
+- **The 6809:** the computed-goto core of [6809EmulatorPicoSeries](https://github.com/ajtaji/6809EmulatorPicoSeries),
+  Thumb-2 assembly dispatch on the RP2350.
+- **Both cores working:** core 0 runs the machine, paced to 59.92 frames a second; core 1 draws each finished
+  frame - only the lines whose inputs changed - and streams the rows to the panel by DMA while it draws the
+  next line. The renderer's inner loops are Cortex-M33 (Thumb-2) assembly on the RP2350 and Cortex-M0+
+  (Thumb-1) assembly on the RP2040, each checked against a plain PureMetal version on silicon.
+- **Keyboard** from the PC over the board's USB serial port; a monitor for status, the screen as text, a
+  picture capture, full speed and reset.
+- **Sound** from the 6-bit DAC and the single-bit output, filtered like the CoCo's own coupling capacitor;
+  heard on the desktop version; on a Pico it goes to a Bluetooth speaker in a build that names one.
+- **Desktop version** for Windows: the same machine files with 512 KB, `.DSK` files, sound, a debugger view.
 
-## Hardware
+## Supported boards
 
-The LAFVIN ST7796 kit, wired as the NES emulator in this family uses it: SCK GP2, MOSI GP3 (SPI0,
-100 MHz on the Pico W), CS GP5, DC GP6, RESET GP7. The 640 x 240 CoCo picture (borders included) is
-shown on the 480 x 320 panel at 3:4 horizontally and 4:3 vertically; a line is sent only when it changed.
+| Board | Firmware | Panel | ROMs and disks | Tested on silicon |
+|---|---|---|---|---|
+| Raspberry Pi Pico W (RP2040, 200 MHz) | `coco3-pico-w.uf2` | LAFVIN ST7796, SPI 100 MHz | flash | yes |
+| Raspberry Pi Pico 2 W (RP2350, 150 MHz) | `coco3-pico2-w.uf2` | LAFVIN ST7796, SPI 75 MHz | flash | built; same code as the two below, not run on a board |
+| Raspberry Pi Pico 2 W (RP2350) | `coco3-pico2-w-usb-images.uf2` | LAFVIN ST7796, SPI 75 MHz | sent over USB at boot into SRAM | yes |
+| Adafruit Feather RP2350 HSTX | `coco3-feather-rp2350.uf2` | none (the picture over USB) | flash | yes |
 
-The keyboard is the PC's, over the board's USB serial port: `py -3 tools/console.py --port COM7`.
+The panel is the LAFVIN ST7796 3.5" kit: SCK GP2, MOSI GP3 (SPI0), CS GP5, DC GP6, RESET GP7. The 640 x 240
+CoCo picture (borders included) is shown 3:4 horizontally and 4:3 vertically on the 480 x 320 panel. The
+SPI clock is at most half the system clock: 100 MHz on a Pico W at 200 MHz, 75 MHz on a Pico 2 W at its
+standard 150 MHz (the firmware says so at boot). The RAM given to the CoCo is 128 KB on every Pico; 512 KB
+does not fit beside the 6809 core in SRAM.
 
-## Flash layout
+## Performance
 
-| Board | Program | ROMs (`make_rom_region.py`) | Disks (`make_disk_region.py`) |
+Measured on the boards with the firmware's own status line (`tests/speed.txt`, `tests/demo.txt`,
+`tests/p2w_panel.txt`), PureMetalForge 341fd5aca, the 6809 core at 25cde43:
+
+| | Pico W + panel | Pico 2 W + panel | Feather RP2350 |
+|---|---:|---:|---:|
+| BASIC on screen, pictures a second | **59.9** | **59.9** | **59.9** |
+| core 0 / core 1 busy, BASIC at 0.89 MHz | 21% / 25% | 17-19% / 14-17% | 17% / 14% |
+| core 0 / core 1 busy, BASIC at 1.79 MHz | 39% / 23% | 29% / 21% | 36% / 13% |
+| the demo (palette rolling, 1.79 MHz), pictures a second | 52-56 | 43-48 | 59.9 |
+| unthrottled, 0.89 MHz | 3,585 kHz (4.0x a real CoCo 3) | - | 3,979 kHz (4.4x) |
+| unthrottled, 1.79 MHz | 4,490 kHz (2.5x) | - | 4,862 kHz (2.7x) |
+
+The demo changes its colours 30 times a second, and each change rewrites 256 of the panel's 320 rows
+(246 KB): every change reaches both panels. On the Pico 2 W the 75 MHz panel wire is the limit (about 85%
+busy); on the Pico W it is drawing.
+
+## Quick start
+
+1. **Firmware.** Hold BOOTSEL while plugging the board in, and copy the `.uf2` for your board from
+   [`firmware/`](firmware) (or the release assets) onto the drive that appears. Check the download against
+   [`firmware/SHA256SUMS.txt`](firmware/SHA256SUMS.txt).
+2. **ROMs.** Make the ROM region (see [ROMs](#roms)) and copy its `.uf2` onto the board the same way, or send
+   it with PureMetalForge: `PureMetalForge.exe --radio-firmware coco_rom.uf2 --port COM7`.
+3. **Disks (optional).** `py -3 tools/make_disk_region.py --drive 0 demo/coco3demo.dsk --drive 1 blank --out disks.uf2`
+   and copy or send `disks.uf2` the same way. (Pico 2 W: add `--target rp2350`.)
+4. **Keyboard.** `py -3 tools/console.py --port COM7` (the board's USB serial port; needs `pyserial`).
+   Typing goes to the CoCo. `Ctrl+]` then a letter is a monitor command: `s` status, `t` the screen as
+   text, `c` capture, `f` full speed on/off, `p` CPU registers, `r` reset.
+5. At `OK`, try the demo: `LOADM"COCO3DEM":EXEC`.
+
+**Pico 2 W with USB images** (`coco3-pico2-w-usb-images.uf2`, for a board whose flash holds other
+firmware's stores): at boot it prints `COCO SEND IMAGES` and waits ten seconds for the ROM region and one
+disk. `tools/board.py` sends them: a script whose first line is `images rom_region.bin disk.bin` (the `--bin`
+outputs of `make_rom_region.py` and `make_disk_region.py`; see `tests/p2w_panel.txt`). Nothing but the
+firmware is written to flash, and disk writes last until the board is reset.
+
+### Flash layout
+
+| Board | Firmware | ROM region (`make_rom_region.py`) | Disks (`make_disk_region.py`) |
 |---|---|---|---|
-| Pico W | below $50000 | $140000-$14FFFF | $150000-$1EFFFF (4 x $28000) |
-| Pico 2 W | below $50000 | $3E0000-$3EFFFF | $300000-$39FFFF (overlaps a PDP-11 RK0 pack at $240000-$3FFFFF: not both) |
-| Feather RP2350 HSTX (`coco3_feather.pico2w`) | below $40000 | $4A2000-$4BFFFF | one slot, $6B5000-$6DCFFF (of $6B5000-$6FFFFF), between the PDP-11 packs |
+| Pico W | below $50000 | $140000-$14FFFF (`--target rp2040`, the default) | $150000-$1EFFFF, four slots of $28000 |
+| Pico 2 W | below $50000 | $3E0000-$3EFFFF (`--target rp2350 --offset 0x3E0000`) | $300000-$39FFFF (`--target rp2350`) |
+| Feather RP2350 | below $40000 | $4A2000-$4BFFFF (`--offset 0x4A2000`) | one slot at $6B5000 (`--offset 0x6B5000`) |
 
-On the Pico W these stay clear of the NES ROM store, the radio firmware, the C64 emulator's region ($1F0000)
-and the Bluetooth link key that other
-programs keep on the same boards.
+The firmware ends below $50000 so that a game store kept from $50000 by other firmware on the same board
+survives; the last flash sector is left for a Bluetooth link key.
 
-## Use
+## ROMs
+
+You need the CoCo 3's internal ROM (32 KB, `coco3.rom`) and the Disk BASIC 1.1 cartridge ROM (8 KB,
+`disk11.rom`), from your own CoCo 3 and FD-502, or another copy you are entitled to use. They are checked
+against the SHA-1s MAME lists (`coco3.rom` e0d82953..., `disk11.rom` 10bdc5aa...).
+
+- From ROM files: `py -3 tools/make_rom_region.py --rom coco3.rom --cart disk11.rom --out coco_rom.uf2`
+  (add `--target rp2350 --offset 0x3E0000` for a Pico 2 W, `--bin rom_region.bin` for the USB-images build).
+- From an assembly source of them you are entitled to use (for example a clone of the `coco_roms`
+  disassembly project): `tools\build_roms.ps1 -Source <that clone>` assembles them with its a09 assembler,
+  refuses any ROM whose SHA-1 is not the expected one, and writes the ROM region.
+
+The region carries CRC-32s; the firmware checks them at every boot and says what is wrong in plain words
+if anything is. The text font is read from your ROM (the HPRINT glyphs) - none is in the firmware.
+
+## Building from source
+
+Requires PureMetalForge (341fd5aca or later) and Python 3 with `pyserial`. Clone
+[6809EmulatorPicoSeries](https://github.com/ajtaji/6809EmulatorPicoSeries) beside this repository.
 
 ```powershell
-tools/build_roms.ps1 -Source <clone of coco_roms> -Out private/coco_rom.uf2
-& <PureMetalForge.exe> --radio-firmware private/coco_rom.uf2 --port COM7
-py -3 tools/make_disk_region.py --drive 0 blank --out private/disks.uf2
-& <PureMetalForge.exe> --radio-firmware private/disks.uf2 --port COM7
-tools/build.ps1 -Compiler <PureMetalForge.exe> -Port COM7
-py -3 tools/console.py --port COM7
+tools\build.ps1 -Compiler <PureMetalForge.exe>                                   # Pico W -> firmware\coco3-pico-w.uf2
+tools\build.ps1 -Compiler <PureMetalForge.exe> -Source rp2350\coco3.pico2w      # Pico 2 W -> firmware\coco3-pico2-w.uf2
+tools\build.ps1 -Compiler <PureMetalForge.exe> -Port COM7 -Script tests\basic_boot.txt   # build, upload, run a test
 ```
 
-`tools/build.ps1` builds, checks where the image ends, uploads through PureMetalForge's own upload,
-and can run a `tools/board.py` script against the board (type keys, wait for text on the CoCo screen,
-capture the rendered picture as a PNG). Ctrl+] then a letter is a monitor command: `s` status, `t` the
-text on the screen, `c` capture, `f` full speed, `p` CPU registers, `r` reset.
+`tools/build.ps1` builds, checks where the image ends, and can upload it and run a `tools/board.py` script
+against the board. `tools/bench.ps1` runs several builds and scripts in one go. Wrappers: `rp2040/coco3.picow`,
+`rp2350/coco3.pico2w`, `rp2350/coco3_usbimages.pico2w`, `rp2350/coco3_feather.pico2w`; the machine itself is
+in `src/`.
 
-## Measured
+## The desktop version
 
-Pico W (RP2040 at 200 MHz), the LAFVIN panel attached, 2026-10-23. Every figure is the firmware's own
-status line read over USB by `tools/board.py`; the scripts are in `tests/`.
+![The desktop version running the PureMetal demo](docs/desktop-demo.png)
 
-- **Boots Disk Extended Color BASIC 2.1** to `OK` and runs a typed program (`tests/basic_boot.txt`:
-  `PRINT 2+3`, then `10 FOR I=1 TO 5 / 20 PRINT I*I / 30 NEXT I / RUN` prints 1 4 9 16 25).
-- **Speed against a real CoCo 3** (`tests/speed.txt`, BASIC running `10 A=A+1:GOTO 10`):
-
-  | | real CoCo 3 | here, paced | here, unthrottled (monitor `f`) |
-  |---|---:|---:|---:|
-  | 0.89 MHz | 894.9 kHz, 59.92 frames/s | 894 kHz, 59.92 frames/s, core 0 29% busy | **3,064 kHz, 205 frames/s = 3.43x** |
-  | 1.79 MHz (`POKE 65497,0`) | 1,789.8 kHz | 1,790 kHz, core 0 44% busy | **4,034 kHz, 135 frames/s = 2.25x** |
-
-  Paced is the default: the machine runs at exactly the real machine's rate. The unthrottled rate at
-  0.89 MHz is lower in kHz because the machine's per-scanline work is the same at both speeds.
-- **RP2350**: the same tests on an Adafruit Feather RP2350 HSTX (the Pico 2 W build, 150 MHz, no panel - the
-  picture read over USB): BASIC boots and runs the program, the TIMER loop counts **910** as on the Pico W and the
-  PC, and the demo LOADMs from its flash disk and runs; at 0.89 MHz the machine uses 23% of core 0.
-- **Thumb-2 on the RP2350 (2026-10-25).** The renderer's four inner loops - the 640 -> 480 scale with its
-  hash, the GIME graphics bytes, the glyph dots of every text mode, the border fill - are Cortex-M33
-  assembly on the Pico 2 builds (`src/video_t2.pmi`) and PureMetal on the RP2040 and the PC
-  (`src/video_portable.pmi`), both run from SRAM. Same tests, same boards, compiler `9777f6cd6`, 6809 core
-  `61d7444`; core 1's figure is whole 240-line pictures rendered a second (the panel can show 60):
-
-  | | before | after |
-  |---|---:|---:|
-  | **Feather RP2350**, render, BASIC text | 16.5 /s | **44.5 /s** (2.7x) |
-  | **Feather RP2350**, render, the demo (320 x 192 x 16) | 11.5 /s | **59.7 /s** (5.2x) |
-  | Feather RP2350, unthrottled 0.89 / 1.79 MHz | 3,420 / 4,235 kHz | 3,525 / 4,255 kHz |
-  | **Pico W RP2040** (Thumb-1, must not regress), render, text | 16.4 /s | 16.5-17.6 /s |
-  | Pico W RP2040, unthrottled 0.89 / 1.79 MHz | 3,130 / 4,101 kHz | **3,450 / 4,362 kHz** (+10% / +6%) |
-
-  On the RP2040 the gain is from the kernels moving into SRAM (they had shared the flash cache with core
-  0) and from a scanline's end doing less: HSYNC sets CA1's flag in one step, the body's end is a table.
-  The palette is looked up again only when a palette register moves. Proof that the assembly draws what
-  the PureMetal draws: `tools/vcheck_build.py` makes a build that runs both on every call, on the same
-  inputs, and counts differences - through every mode BASIC reaches and the demo (`tests/vcheck.txt`):
-  199,297 scale calls, 2,471,728 glyph rows, 84,942 graphics runs, 39,864 fills, **0 differences**. The
-  RP2040's six mode pictures (`tests/video_modes.txt`) are byte-identical to before; BASIC, the TIMER loop
-  (910) and the demo pass on both chips.
-
-  Then the 6809 core's own Thumb-2 dispatch tail and short branches (its commit `d9f5978`; its RP2040 file
-  is unchanged): Feather RP2350 unthrottled **3,525 -> 3,736 kHz (4.17x a real CoCo 3) at 0.89 MHz and
-  4,255 -> 4,560 kHz (2.55x) at 1.79 MHz**, core 0 24% busy paced at 0.89 MHz, 39% at 1.79; BASIC, the
-  TIMER loop (910) and the demo pass. From both: 3,420 -> 3,736 kHz and 4,235 -> 4,560 kHz on the RP2350.
-- **60 pictures a second, both cores working (2026-10-25, `ef95149`).** Core 1 now draws each finished frame
-  once (59.92 a second, the CoCo 3's own rate) and only the lines whose inputs changed (a CRC-32 key per
-  line), core 0's per-scanline path runs from SRAM, graphics bytes expand through a look-up table, and the
-  Pico 2 boards send panel rows by DMA while the next line is drawn. The status line gives each core's busy
-  share. Same tests (`speed`, `demo`, `basic_boot`, `timer`, `video_modes`, `vcheck`, `p2w_panel`), compiler
-  `883c4ae12`, 6809 core `25cde43`:
-
-  | board | BASIC, pictures/s | core 0 / core 1 busy (BASIC, 0.89 MHz) | the demo, pictures/s (core 1) | unthrottled 0.89 / 1.79 MHz |
-  |---|---:|---:|---:|---:|
-  | **Pico 2 W + panel** (COM6) | **59.9** | 19% / 14% | 44.5 (98%) | - |
-  | Feather RP2350, no panel (COM20) | **59.9** | 17-22% / 14% | **59.9** (75%) | 3,979 / 4,862 kHz |
-  | **Pico W + panel** (COM7, RP2040) | **59.9** | 21% / 40% | 13.7 (100%) | 3,585 / 4,490 kHz |
-
-  The demo rolls its palette every second frame, so every band - most of the picture - changes: on the
-  Pico 2 W the panel's SPI (75 MHz, half the 150 MHz clock) carries about 75 changed rows a picture at
-  102 us each, and core 1 waits for it; on the Pico W the drawing itself is the limit. BASIC (a still or
-  slowly changing screen) is at the full 59.92 on every board. The Pico 2 W build takes its ROMs and the
-  demo disk over USB into SRAM at boot (`rp2350/coco3.pico2w`, `tests/p2w_panel.txt`): a shared board's
-  flash is full.
-
-  **Correction (2026-10-25, later): the panel figures for the demo above were wrong** - Ron saw that the Picos
-  did not scroll all the bars as the PC does. A row went to the panel only when a rotate-and-add hash of its
-  pixels changed, and that hash is `$FFFFFFF8` for every one-colour line whatever its colour: the colour
-  bands were never sent, only the rows with letters in them. Now a line is sent whenever its inputs (bytes,
-  mode, palette, border) change, and every line once a second; no pixel hash is trusted. With every row
-  really sent, and rows streamed by DMA from the half of a double buffer they were drawn into (Pico W too),
-  the RP2040's renderer in Thumb-1 assembly (`src/video_t1.pmi`, checked like the Thumb-2 one: 0
-  differences), border rows no longer re-sent when only the palette changes, and the demo rolling its
-  palette inside the vertical blank as a CoCo 3 program does (it took two frames before):
-
-  | the demo, 1.79 MHz | pictures/s | core 1 busy | |
-  |---|---:|---:|---|
-  | **Pico W + panel** (RP2040, SPI 100 MHz) | **52-56** | 88-93% | was 13.7 |
-  | **Pico 2 W + panel** (SPI 75 MHz) | **43-48** | 99% | the wire: ~8,350 rows a second, 85% of it |
-  | Feather RP2350 (no panel) | 59.9 | 57% | |
-
-  The demo changes its colours 30 times a second and each change is 256 rows (246 KB): every change reaches
-  both panels; the pictures not drawn are of frames identical to one that was. BASIC is 59.9 on all three.
-- Disk: on a blank disk in flash a typed program is SAVEd, wiped, LOADed and RUN (`tests/disk.txt`); after
-  a reflash and cold boot `DIR` still lists it and it LOADs and RUNs (`tests/disk_persist.txt`).
-
-## The desktop program (desktop/)
-
-The same CoCo 3 on a Windows PC, in PureBasic, drawn with the Neon Arcade Display Engine. It compiles the
-machine files in `src/` unchanged (GIME, PIAs, video, keyboard, sound, FD-502) with the PC's own host layer
-(`desktop/host.pbi`) and the desktop 6809 core of 6809EmulatorPicoSeries (`desktop/cpu6809.pbi`, clone it
-beside this repository). The PC gives the CoCo **512 KB**, and the FD-502's drives are `.DSK` files.
+The same CoCo 3 for Windows, in PureBasic, drawn with the
+[Neon Arcade Display Engine](https://github.com/ajtaji/Neon-Arcade-Dispay-Engine): the machine files in
+`src/` compiled unchanged with a PC host layer (`desktop/host.pbi`) and the 6809 core's desktop build. The PC
+gives the CoCo 512 KB, and the drives are `.DSK` files. Clone the engine and 6809EmulatorPicoSeries beside
+this repository.
 
 ```powershell
 & "C:\Program Files\PureBasic\Compilers\pbcompilerc.exe" desktop\CoCo3.pb /EXE build\CoCo3.exe /THREAD /DPIAWARE
-build\CoCo3.exe [--rom coco3.rom] [--cart disk11.rom] [--disk0 games.dsk] [--new-disk1 blank.dsk]
-tools\desktop_check.ps1          # build, then the console checks below
+build\CoCo3.exe --rom <coco3.rom> --cart <disk11.rom>
+build\CoCo3.exe --rom <coco3.rom> --cart <disk11.rom> --disk0 demo\coco3demo.dsk --type 'LOADM\qCOCO3DEM\q:EXEC\n'
+tools\desktop_check.ps1 -Rom <folder with coco3.rom and disk11.rom>
 ```
 
-The window shows the CoCo's screen (4:3, scaled to fit), the 6809's registers, the GIME's registers, MMU
-and palette, a disassembly from the PC, a memory view, the log, Run/Pause/Step/Frame/Reset/Full speed/Mute,
-and the drives. Typing goes to the CoCo keyboard (arrows, Esc = BREAK, Home = CLEAR, F1, F2); F5 run/pause,
-F10 one instruction, F11 one frame, F3 reset, F8 full speed, F9 mute. Sound plays through Windows.
-`--log N` runs N frames with no window and prints the CoCo's screen as text; `--type` / `--type-file` type
-into it; `--shot file.png N` saves the window after N frames.
+ROMs default to a `roms` folder beside `CoCo3.exe`. The window shows the CoCo's screen, the 6809's and the
+GIME's registers, the MMU and palette, a disassembly, memory, the log and the drives. Typing goes to the
+CoCo (arrows, Esc = BREAK, Home = CLEAR, F1, F2); F5 run/pause, F10 one instruction, F11 one frame, F3
+reset, F8 full speed, F9 mute. `--log N` runs N frames without a window and prints the screen as text;
+`--type` and `--type-file` type into the CoCo (`\n` is ENTER, `\q` a quote); `--shot file.png N` saves the
+window after N frames; `--wav file.wav` records the sound.
 
-Measured on this PC (2026-10-23, `tools/desktop_check.ps1`): BASIC boots and runs a typed program; BASIC's
-10-second TIMER loop counts **910**, the same as on the Pico W (`tests/timer.txt`); a program SAVEd to a new
-`.DSK` loads and runs in a second session. Unthrottled, the console runs 280-410 MHz of 6809 cycles (300-450x a
-real CoCo 3); the window holds the real machine's 59.92 frames a second.
+## The PureMetal demo
 
-## The PureMetal demo (demo/)
+[`demo/coco3demo.coco3`](demo/coco3demo.coco3) is a PureMetal program for the CoCo 3 itself, built with
+PureMetalForge's "Tandy Color Computer 3 (Disk BASIC)" board into [`demo/coco3demo.dsk`](demo/coco3demo.dsk):
+a 320 x 192 x 16 GIME picture held in a PureMetal array, a title in large letters, colour bands rolling up
+the screen (the palette rotated inside the vertical blank), and a tune on the 6-bit DAC played from the
+GIME's fast timer on FIRQ. `LOADM"COCO3DEM":EXEC`.
 
-`demo/coco3demo.coco3` is a PureMetal program for the CoCo 3 itself, built with PureMetalForge's
-"Tandy Color Computer 3 (Disk BASIC)" board into a Disk BASIC disk: a 320 x 192 x 16 GIME picture held in a
-PureMetal array, a title in large letters, palette bands rolling up the screen, and a tune on the 6-bit DAC
-played from the GIME's fast timer on FIRQ. `LOADM"COCO3DEM":EXEC` from the disk in drive 0 (on the Pico,
-put the `.dsk` in a slot with `make_disk_region.py`).
+## Testing
 
-## Sources
+Every test runs on the boards through `tools/board.py` (scripts in `tests/`):
 
-MAME's `gime.cpp`, `coco3.cpp`, `coco.cpp`, `coco_fdc.cpp` and `mc6847.cpp` (BSD-3-Clause) were read
-for the hardware's behaviour; the 64 composite colours are MAME's table (`src/video.pmi`). No MAME code
-is compiled into the firmware.
+- `basic_boot` - Disk Extended Color BASIC boots to `OK` and runs a typed program;
+- `timer` - BASIC's own 10-second TIMER loop counts 910, the same on the Pico W, the RP2350 and the PC;
+- `speed` - paced and unthrottled rates at both CPU speeds;
+- `demo`, `demo_feather`, `p2w_panel` - the demo LOADed from disk, the panel's rate, both cores' busy shares;
+- `disk`, `disk_persist` - SAVE, LOAD and RUN on a flash disk, kept through a reflash;
+- `video_modes` - every video mode drawn by a diagnostic build and captured (byte-identical pictures);
+- `vcheck`, `vcheck_picow` - a check build (`tools/vcheck_build.py`) that runs the assembly renderer and the
+  PureMetal renderer on every call with the same inputs and counts differences: 0 on both chips.
+
+`tools/desktop_check.ps1` runs the desktop checks (boot, TIMER, a disk saved and loaded in a second session).
+
+## Known limits
+
+- Cassette, RS-232, cartridge auto-start and joystick hardware are not emulated.
+- 128 KB of CoCo RAM on the Picos (512 KB on the desktop).
+- Sound on a Pico needs a Bluetooth speaker named in a private build (`src/audio_bt.pmi`); the public
+  firmware is silent. The Bluetooth path has not been run end to end.
+- The flash-layout Pico 2 W firmware has not been run on a board (the USB-images build and the Feather
+  build, which share its code, have).
+- On the Pico 2 W a picture that changes most of its rows is limited by the 75 MHz panel wire.
+
+## Licence
+
+MIT - see [LICENSE](LICENSE). Copyright (c) 2026 ajtaji.
+
+## Credits
+
+- The GIME colour table and the hardware behaviour follow MAME's `gime.cpp`, `coco3.cpp` and `coco.cpp`
+  (BSD-3-Clause, Nathan Woods): [licenses/MAME-BSD-3-Clause.txt](licenses/MAME-BSD-3-Clause.txt). No MAME
+  code is compiled into the firmware.
+- The 6809 core: [6809EmulatorPicoSeries](https://github.com/ajtaji/6809EmulatorPicoSeries).
+- The desktop window: [Neon Arcade Display Engine](https://github.com/ajtaji/Neon-Arcade-Dispay-Engine).

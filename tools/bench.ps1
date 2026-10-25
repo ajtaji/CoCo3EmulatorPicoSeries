@@ -1,15 +1,18 @@
-# Several board runs under ONE lease of a shared board: build every image first (nothing waits on the
-# board for a compile), then take C:\PMFBuild\board-leases\<port>.lease once, upload and run each
-# board.py script in turn, and give the lease back.
+# Several board runs in one go: build every image first (nothing waits on the board for a compile), then
+# upload and run each board.py script in turn. On a bench where boards are shared, pass -LeaseScript (or set
+# COCO3_LEASE_SCRIPT) to a lease.ps1 that defines Get-BoardLease / Release-BoardLease: the board is then
+# taken once for all the runs and given back at the end, whatever happens.
 #
-#   tools\bench.ps1 -Compiler <pmf> -Port COM7 -Jobs 'rp2040\Diagnostics\video_modes.picow|tests\video_modes.txt|50','rp2040\Diagnostics\cpu_machine.picow|tests\cpu_machine.txt|30'
+#   tools\bench.ps1 -Compiler <pmf> -Port COM7 -Jobs 'rp2040\Diagnostics\video_modes.picow|tests\video_modes.txt|50','rp2040\coco3.picow|tests\basic_boot.txt|60'
 #
-# A job is source|script|seconds; an image file (.uf2) as the source is sent as it is (a ROM or disk region).
+# A job is source|script|seconds; an image file (.uf2) as the source is sent as it is. One whose name says
+# region, disks or rom (a ROM or disk region for the flash) is only sent; its script is not run.
 param(
     [Parameter(Mandatory = $true)][string]$Compiler,
     [Parameter(Mandatory = $true)][string]$Port,
     [Parameter(Mandatory = $true)][string[]]$Jobs,
-    [string]$Lease = 'coco3'
+    [string]$Lease = 'coco3',
+    [string]$LeaseScript = $env:COCO3_LEASE_SCRIPT
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -28,13 +31,14 @@ foreach ($job in $Jobs) {
     }
     $plan += , @($img, $(if ($parts.Count -gt 1 -and $parts[1]) { [IO.Path]::GetFullPath((Join-Path $root $parts[1])) } else { '' }), $(if ($parts.Count -gt 2) { $parts[2] } else { '10' }))
 }
-# The shared boards are taken and given back only through the lease folder's own lease.ps1 (it writes
-# the lease in one call, releases by rename-then-delete, and only its owner releases it).
-. 'C:\PMFBuild\board-leases\lease.ps1'
-$leaseObj = Get-BoardLease -Port $Port -Owner $Lease -Minutes (2 + 2 * $plan.Count)
+$leaseObj = $null
+if ($LeaseScript) {
+    . $LeaseScript
+    $leaseObj = Get-BoardLease -Port $Port -Owner $Lease -Minutes (2 + 2 * $plan.Count)
+}
 $failed = 0
 try {
-    "Lease taken: $($leaseObj.Tag)"
+    if ($leaseObj) { "Lease taken: $($leaseObj.Tag)" }
     foreach ($p in $plan) {
         "=== $($p[0])"
         $up = Start-Process -FilePath $compilerPath -ArgumentList ('--radio-firmware "' + $p[0] + '" --port ' + $Port) `
@@ -49,7 +53,6 @@ try {
         if ($LASTEXITCODE -ne 0) { "BOARD RUN FAILED (exit $LASTEXITCODE)"; $failed++ }
     }
 } finally {
-    Release-BoardLease $leaseObj
-    "Lease released"
+    if ($leaseObj) { Release-BoardLease $leaseObj; "Lease released" }
 }
 if ($failed) { exit 1 }

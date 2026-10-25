@@ -15,8 +15,8 @@ Global Dim pal.a(16)
 ; The tune: pairs of (timer value, frames). The timer counts at 3.58 MHz (279 ns) and the GIME reloads it with
 ; the value plus two; the FIRQ turns the wave over every SECOND interrupt, so a half period of f Hz is
 ; 3579545 / (4 f) - 2 counts (the 12-bit timer cannot count the lower octave itself): 523 - 784 Hz became
-; 262 - 392 Hz, an octave down from the first version, whose unbroken square wave at 523 - 784 Hz Ron
-; heard as a high-pitched tone (2026-10-24). 0 is a rest.
+; 262 - 392 Hz, an octave down from the first version, whose unbroken square wave at 523 - 784 Hz
+; sounded like one high-pitched tone. 0 is a rest.
 DataSection
   Tune:
   Data.u 2714, 12, 2714, 12, 2562, 12, 2281, 12, 2281, 12, 2562, 12, 2714, 12, 3046, 12

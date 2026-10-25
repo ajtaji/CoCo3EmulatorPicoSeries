@@ -1,4 +1,4 @@
-# tests/vcheck.txt for the Pico W (COM7): its demo disk is in drive 1. Run on tools/vcheck_build.py --target rp2040.
+# tests/vcheck.txt for a Pico W whose demo disk is in flash drive 1. Run on tools/vcheck_build.py --target rp2040.
 expect 15 disks: 1 1
 screen 20 \r\nOK +\r\n
 line PRINT "VDG TEXT";CHR$(128+16*3+5);CHR$(143);"inverse"

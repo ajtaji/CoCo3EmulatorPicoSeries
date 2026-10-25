@@ -15,3 +15,6 @@ demo/*.hex
 demo/*.bin
 demo/*.slots.txt
 demo/*.coco.bin
+!demo/coco3demo.dsk
+PUBLISH-META.txt
+firmware/*.err

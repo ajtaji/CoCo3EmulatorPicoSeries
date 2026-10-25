@@ -4,8 +4,8 @@
 #   tools\build.ps1 -Compiler <pmf> -Source rp2040\Diagnostics\video_modes.picow -Output build\video_modes.uf2 -Port COM7 -Seconds 30
 #   tools\build.ps1 -Compiler <pmf> -Port COM7 -Script tests\basic_hello.txt  # upload, then run a board.py script
 #
-# The image must end below flash $10050000 (the NES ROM store other programs on a shared board keep
-# at $50000). A shared board is taken and given back only through C:\PMFBuild\board-leases\lease.ps1.
+# The image must end below flash $10050000, so a game store kept from $50000 by other firmware on the same
+# board survives. On a shared bench pass -LeaseScript (or set COCO3_LEASE_SCRIPT), as for bench.ps1.
 param(
     [Parameter(Mandatory = $true)][string]$Compiler,
     [string]$Source = 'rp2040\coco3.picow',
@@ -14,6 +14,7 @@ param(
     [int]$Seconds = 15,
     [string]$Script = '',
     [string]$Lease = 'coco3',
+    [string]$LeaseScript = $env:COCO3_LEASE_SCRIPT,
     [switch]$NoUpload
 )
 $ErrorActionPreference = 'Stop'
@@ -45,12 +46,12 @@ for ($o = 0; $o -lt $uf2.Length; $o += 512) {
     if ($blockEnd -gt $end) { $end = $blockEnd }
 }
 'Image ends at 0x{0:X8} ({1} bytes of flash)' -f $end, ($end - 0x10000000)
-if ($end -gt 0x10050000) { throw ('Image reaches 0x{0:X8}, past 0x10050000: on a shared board it would overwrite the NES ROM store' -f $end) }
+if ($end -gt 0x10050000) { throw ('Image reaches 0x{0:X8}, past 0x10050000: it would overwrite a store kept from $50000' -f $end) }
 "SHA-256 $((Get-FileHash -Algorithm SHA256 -LiteralPath $outputPath).Hash) $outputPath"
 if (!$Port -or $NoUpload) { return }
 
-. 'C:\PMFBuild\board-leases\lease.ps1'
-$leaseObj = Get-BoardLease -Port $Port -Owner $Lease -Minutes 4
+$leaseObj = $null
+if ($LeaseScript) { . $LeaseScript; $leaseObj = Get-BoardLease -Port $Port -Owner $Lease -Minutes 4 }
 try {
     $up = Start-Process -FilePath $compilerPath -ArgumentList ('--radio-firmware "' + $outputPath + '" --port ' + $Port) `
         -WorkingDirectory $compilerRoot -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput ($outputPath + '.upload.log') -RedirectStandardError ($outputPath + '.upload.err')
@@ -61,5 +62,5 @@ try {
     & py -3 @args2
     if ($LASTEXITCODE -ne 0) { throw "board.py exit $LASTEXITCODE" }
 } finally {
-    Release-BoardLease $leaseObj
+    if ($leaseObj) { Release-BoardLease $leaseObj }
 }

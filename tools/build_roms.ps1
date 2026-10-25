@@ -1,14 +1,14 @@
 # Build coco3.rom and disk11.rom from the disassembled sources of github.com/tomctomc/coco_roms, check
 # them against the SHA-1s that project's Makefile expects (MESS/MAME's), and pack the ROM region UF2.
 #
-#   tools\build_roms.ps1 -Source C:\PMFBuild\coco_roms -Work C:\PMFBuild\coco_roms_build -Out private\coco_rom.uf2
+#   tools\build_roms.ps1 [-Source ..\coco_roms] [-Work build\roms] [-Out private\coco_rom.uf2] [-Target rp2040|rp2350]
 #
 # The clone is not changed: its HEAD is exported into -Work and built there. a09.c is compiled with
 # MSVC (no make or gcc on this machine); the steps are the Makefile's, in its order. A ROM whose SHA-1
 # differs is refused and nothing is packed. The ROMs and the UF2 stay out of git.
 param(
-    [string]$Source = 'C:\PMFBuild\coco_roms',
-    [string]$Work = 'C:\PMFBuild\coco_roms_build',
+    [string]$Source = (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'coco_roms'),
+    [string]$Work = (Join-Path (Split-Path $PSScriptRoot -Parent) 'build\roms'),
     [string]$Out = 'private\coco_rom.uf2',
     [ValidateSet('rp2040', 'rp2350')][string]$Target = 'rp2040'
 )
@@ -44,6 +44,8 @@ try {
         "$k SHA-1 $h OK"
     }
 } finally { Pop-Location }
+# The region for the flash (the Pico W at $140000, the Feather RP2350 at $4A2000) and, as rom_region.bin
+# in -Work, the same region for a Pico 2 W build that takes it over USB at boot (board.py's images verb).
 & py -3 (Join-Path $PSScriptRoot 'make_rom_region.py') --rom "$Work\coco3.rom" --cart "$Work\disk11.rom" --target $Target `
-    --offset $(if ($Target -eq 'rp2350') { '0x3E0000' } else { '0x140000' }) --out (Join-Path $root $Out)
+    --offset $(if ($Target -eq 'rp2350') { '0x4A2000' } else { '0x140000' }) --out (Join-Path $root $Out) --bin "$Work\rom_region.bin"
 if ($LASTEXITCODE -ne 0) { throw 'make_rom_region.py refused the ROMs.' }

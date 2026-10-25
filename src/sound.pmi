@@ -20,8 +20,7 @@ Global SoundPer.i, SoundMark.i, SoundAcc.i
 
 ; THE COUPLING CAPACITOR. A real CoCo 3's sound reaches the TV through a capacitor, so a level that stays
 ; put - the DAC at rest at the OK prompt - is silence. Without it the ring carried a constant -10240
-; (31% of full scale) from power-on, which a Bluetooth speaker's codec turned into a steady whine (Ron,
-; 2026-10-24). A one-pole high-pass, 1024 samples (21 ms, 7.5 Hz): SoundHp is the output x 1024; each
+; (31% of full scale) from power-on, which a Bluetooth speaker's codec turned into a steady whine. A one-pole high-pass, 1024 samples (21 ms, 7.5 Hz): SoundHp is the output x 1024; each
 ; sample adds its step from the last and takes 1/1024 off. A 523 Hz square droops 4% a half period.
 ; The shifts are taken on a positive value so the rest settles at exactly 0, not -1.
 Global SoundHp.i, SoundHpIn.i

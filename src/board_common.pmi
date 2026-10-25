@@ -283,7 +283,7 @@ Procedure CocoBoot()
   VideoBegin()
   Say("spi_hz=") : Num(SpiHz(0)) : Eol()
   ; the SPI library quietly takes the nearest clock it can make (clk_peri / 2 at most): say when the panel
-  ; got less than was asked (a Pico 2 W at 150 MHz asks 100 MHz and gets 75 - Ron was never told)
+  ; got less than was asked (a Pico 2 W at 150 MHz asks 100 MHz and gets 75, and nothing said so)
   CompilerIf #COCO_HEADLESS = 0
     If SpiHz(0) < #COCO_PANEL_SPI_KHZ * 1000
       Say("NOTE: the panel's SPI runs at ") : Num(SpiHz(0) / 1000000) : Say(" MHz, not the ") : Num(#COCO_PANEL_SPI_KHZ / 1000)

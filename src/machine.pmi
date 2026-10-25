@@ -9,7 +9,7 @@
 ; in progress has used so far (0 between windows).
 ;
 ; Sources: MAME src/mame/trs/gime.cpp, coco3.cpp, coco.cpp (BSD-3-Clause; read, not copied), the
-; CoCo 3 service manual's register descriptions. Downloaded copies: C:\PMFBuild\coco3-reference.
+; CoCo 3 service manual's register descriptions.
 
 ; The wrapper sets #COCO_RAM_PAGES (8 KB pages: 16 = 128 KB, 64 = 512 KB; the MMU's 6-bit page number is
 ; taken modulo it) and #COCO_RAM_LAYOUT (0: one array per page, for a Pico's fragmented SRAM; 1: one array).

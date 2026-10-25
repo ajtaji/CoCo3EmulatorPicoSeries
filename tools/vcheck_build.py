@@ -3,7 +3,7 @@
 #   py -3 tools/vcheck_build.py [--target rp2350|rp2040] [--core-commit 25cde43]
 #   then build build/vcheck/CoCo3/rp2350/<wrapper> (video_t2.pmi) or rp2040/<wrapper> (video_t1.pmi)
 # The core is taken from ../6809EmulatorPicoSeries at the commit given (default: its HEAD), never from its
-# working tree, which another worker may be changing.
+# working tree, which may hold uncommitted changes.
 import argparse, pathlib, re, shutil, subprocess
 root = pathlib.Path(__file__).resolve().parent.parent
 ap = argparse.ArgumentParser()

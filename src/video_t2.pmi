@@ -1,5 +1,4 @@
-; The renderer's four inner loops in Cortex-M33 (Thumb-2) assembly, for the RP2350 builds only (Ron,
-; 2026-10-25: Thumb-2 for speed on the Pico 2 series). video_portable.pmi is the same four in
+; The renderer's inner loops in Cortex-M33 (Thumb-2) assembly, for the RP2350 builds only. video_portable.pmi is the same four in
 ; PureMetal for the RP2040 and the PC; both must do the same thing, and the tests run on both chips.
 ;
 ; They run on core 1 (VideoFrame). The 6809 core reserves r4, r5 and r8-r11 for CORE 0's code; core 1
@@ -7,7 +6,7 @@
 ; r12, never r7 (the frame) or r8-r11 (reserved program-wide). Inputs come in the Vx Globals. Like the
 ; PureMetal ones they run from SRAM (ProcedureRAM), clear of the flash cache core 0's code uses.
 ;
-; Measured on the Feather RP2350 (COM20) per 240-line pass, before: the 640 -> 480 scale 34 ms (44
+; Measured on a Feather RP2350 per 240-line pass, before: the 640 -> 480 scale 34 ms (44
 ; cycles a pixel), drawing GIME graphics 50 ms, BASIC's text 26 ms.
 
 ProcedureRAM.l VideoScaleOut()

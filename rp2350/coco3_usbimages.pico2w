@@ -1,0 +1,30 @@
+; Tandy Color Computer 3 for the Pico 2 W (RP2350): the 6809 core of 6809EmulatorPicoSeries (cloned
+; beside this repository), 128 KB of CoCo RAM, the LAFVIN ST7796 panel, the keyboard over USB serial.
+; The ROMs come over USB at boot (below); none are in this image.
+#CPU_TIMING = 1
+#CPU_ASM_TAIL = 1
+#VIDEO_RGB = 0
+#COCO_AUDIO = 0                          ; the public firmware names no speaker: no sound
+#COCO_BOARD_NAME$ = "Pico 2 W"
+; THE ROMS AND THE DISK COME OVER USB INTO SRAM (#COCO_SRAM_IMAGES), for a board whose flash already holds
+; other firmware's stores (a game store from $50000, radio firmware, disk packs): this firmware writes
+; nothing but itself (it ends well below $50000). At boot it
+; prints COCO SEND IMAGES and takes the ROM region (make_rom_region.py --bin) and a disk slot
+; (make_disk_region.py --bin) in checked 4 KB blocks (board.py's `images` verb); a disk written then
+; lives until the board is reset. 64 KB + 160 KB of the RP2350's SRAM.
+#COCO_SRAM_IMAGES = 1
+#COCO_ROM_OFFSET = 0
+#COCO_DISK_OFFSET = 0
+#COCO_DISK_FLASH_SLOTS = 0
+; A Bluetooth speaker's link key, if another firmware keeps one in the last sector ("BTK1"), read only.
+#COCO_BTKEY_FLASH = $103FF000
+#COCO_HEADLESS = 0
+XIncludeFile "coco3_body.pico2"
+
+Procedure CocoBoardSetup()
+EndProcedure
+
+Procedure CocoFrameHook()
+EndProcedure
+
+Main()

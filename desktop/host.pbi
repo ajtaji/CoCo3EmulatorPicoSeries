@@ -153,7 +153,7 @@ EndProcedure
 
 ; The sound thread. The machine makes 48,000 samples a second by the PC's timer; the sound device plays
 ; 48,000 by its own clock, and the two differ (measured: the machine ran 0.13% ahead of the Bluetooth
-; speaker, so the backlog grew until the old reader jumped 449 samples forward every 7.25 s - Ron's click).
+; speaker, so the backlog grew until the old reader jumped 449 samples forward every 7.25 s - a click).
 ; So the reader follows the device: it reads the machine's samples at a step a fraction of a percent
 ; above or below one, to keep about #HOST_SND_TARGET samples between the machine and the speaker. A step
 ; of 1.003 moves a 36-sample half period by 0.1 sample: nothing to hear. waveOut calls block for

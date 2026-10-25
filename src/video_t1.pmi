@@ -4,7 +4,7 @@
 ; must do the same thing: tools/vcheck_build.py --target rp2040 makes the build that compares them on
 ; silicon). video_t2.pmi is the RP2350's; the PC keeps video_portable.pmi.
 ;
-; Measured on the Pico W (COM7) before (PureMetal): the demo's pictures at 13.7 a second with core 1 100%
+; Measured on a Pico W before (PureMetal): the demo's pictures at 13.7 a second with core 1 100%
 ; busy - the scale alone 44 cycles a pixel. They run on core 1, from SRAM; the blocks use r0-r6 (the
 ; compiler saves what they name; r4 and r5 are core 0's 6809 registers, core 1 has its own), never r7
 ; (the frame). The M0+ cannot make an unaligned word or halfword access: VideoInit checks the arrays.
