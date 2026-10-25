@@ -1,0 +1,13 @@
+# Core 1's render profile (a pinned build with the vp_ counters): BASIC's text screen, then the demo's graphics.
+expect 15 disks: 1 0
+screen 20 \r\nOK +\r\n
+wait 3
+cmd s
+wait 5
+cmd s
+line LOADM"COCO3DEM":EXEC
+wait 40
+cmd s
+wait 5
+cmd s
+expect 3 COCO frames

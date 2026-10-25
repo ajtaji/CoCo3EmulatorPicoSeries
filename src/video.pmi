@@ -23,7 +23,7 @@
 
 Global Dim VideoColor.u(64)              ; GIME colour (6 bits) -> RGB565
 Global Dim VideoColorRgb.l(64)           ; GIME colour (6 bits) -> 0xRRGGBB
-Global Dim VideoPal.u(17)                ; palette registers resolved, 16 = border
+Global Dim VideoPal.l(17)                ; palette registers resolved (RGB565 in a word: one ldr in video_t2), 16 = border
 Global Dim VideoSamples.a(640)           ; one line, as palette indices
 Global Dim VideoOut.u(480)               ; one output row
 Global Dim VideoMap.u(480)               ; output x -> sample
@@ -33,8 +33,17 @@ Global Dim VideoHash.l(240)
 Global Dim CocoFont.a(1024)              ; 128 characters x 8 rows, bit 7 = leftmost
 Global VideoFontLoaded.i
 Global VideoForce.i, VideoFrames.i, VideoRowsSent.i, VideoLastPal.i = -1
+Global VideoPalSerial.i = -1, VideoPalBorder.i = -1   ; what VideoPal was last looked up from
 
 Declare VideoSendRow(y.i, pixels.i)
+
+; The inner loops: video_portable.pmi (PureMetal: RP2040, the PC) or video_t2.pmi (Thumb-2: RP2350),
+; included after this file. Their inputs are these Globals.
+Global VxGlyph.i, VxFg.i, VxBg.i, VxScale.i, VxX.i, VxSrc.i, VxCount.i, VxBase.i, VxHash.l
+Declare.l VideoScaleOut()
+Declare VideoBits()
+Declare VideoGraphicsRun()
+Declare VideoFill(index.i)
 Declare CocoAudioPoll()                 ; core 1 keeps the speaker going between lines
 
 Procedure VideoInit()
@@ -143,33 +152,31 @@ EndProcedure
 ; ---------------------------------------------------------------- one line
 
 Procedure VideoBorderLine(index.i)
-  Protected x.i
-  For x = 0 To 639 : VideoSamples(x) = index : Next
+  VideoFill(index)
 EndProcedure
 
 ; GIME graphics: VdBytes bytes of VdBpp bits per pixel, each pixel VdScale samples wide.
+; The bytes are taken in runs that are contiguous in SRAM: a run ends where the horizontal offset wraps
+; at 256 bytes or where an 8 KB page of the GIME's memory ends.
 Procedure VideoGraphics(addr.i, offset.i, base.i)
-  Protected i.i, byte.i, k.i, x.i, c.i, s.i, shift.i, mask.i, ppb.i
-  x = VdLeft
-  ppb = 8 / VdBpp
-  mask = (1 << VdBpp) - 1
-  For i = 0 To VdBytes - 1
-    byte = PeekA(CocoPhys(addr + ((offset + i) & $FF)))
-    shift = 8 - VdBpp
-    For k = 1 To ppb
-      c = base + ((byte >> shift) & mask)
-      For s = 1 To VdScale
-        VideoSamples(x) = c : x = x + 1
-      Next
-      shift = shift - VdBpp
-    Next
-  Next
+  Protected i.i, a.i, n.i, left.i
+  VxX = VdLeft : VxBase = base
+  i = 0
+  While i < VdBytes
+    a = addr + ((offset + i) & $FF)
+    n = VdBytes - i
+    left = 256 - ((offset + i) & $FF) : If n > left : n = left : EndIf
+    left = $2000 - (a & $1FFF) : If n > left : n = left : EndIf
+    VxSrc = CocoPhys(a) : VxCount = n
+    VideoGraphicsRun()
+    i = i + n
+  Wend
 EndProcedure
 
 ; GIME text: VdBytes characters, 8 dots each, VdScale samples per dot.
 Procedure VideoGimeText(addr.i, offset.i, row.i)
-  Protected i.i, ch.i, attr.i, fg.i, bg.i, glyph.i, bit.i, x.i, s.i, stride.i, under.i, c.i
-  x = VdLeft
+  Protected i.i, ch.i, attr.i, fg.i, bg.i, glyph.i, stride.i, under.i
+  VxX = VdLeft : VxScale = VdScale
   stride = 1 + VdAttr
   under = -1
   If VdAttr
@@ -193,34 +200,26 @@ Procedure VideoGimeText(addr.i, offset.i, row.i)
     EndIf
     If row < 8 : glyph = VideoGlyph(ch, row) : Else : glyph = 0 : EndIf
     If (attr & $40) And row = under : glyph = $FF : EndIf
-    For bit = 7 To 0 Step -1
-      If (glyph >> bit) & 1 : c = fg : Else : c = bg : EndIf
-      For s = 1 To VdScale
-        VideoSamples(x) = c : x = x + 1
-      Next
-    Next
+    VxGlyph = glyph : VxFg = fg : VxBg = bg
+    VideoBits()
   Next
 EndProcedure
 
 ; VDG (MC6847-compatible) text and semigraphics 4, 32 characters of 12 rows.
 Procedure VideoVdgText(addr.i, row.i)
-  Protected i.i, d.i, code.i, glyph.i, bit.i, x.i, c0.i, c1.i, c.i, inv.i, lower.i, sg.i
-  x = 64
+  Protected i.i, d.i, code.i, glyph.i, c0.i, inv.i, lower.i, sg.i
+  VxX = 64 : VxScale = 2
   If VdFF22 & 8 : c0 = 14 : Else : c0 = 12 : EndIf
   For i = 0 To 31
     d = PeekA(CocoPhys(addr + i))
     If d & $80
       ; semigraphics 4: 2 x 2 blocks in colour (d >> 4) & 7, dark (palette 8) where clear
       If row < 6 : sg = (d >> 2) & 3 : Else : sg = d & 3 : EndIf
-      c1 = (d >> 4) & 7
-      For bit = 0 To 15
-        If bit < 8
-          If sg & 2 : c = c1 : Else : c = 8 : EndIf
-        Else
-          If sg & 1 : c = c1 : Else : c = 8 : EndIf
-        EndIf
-        VideoSamples(x) = c : x = x + 1
-      Next
+      glyph = 0
+      If sg & 2 : glyph = $F0 : EndIf
+      If sg & 1 : glyph = glyph | $0F : EndIf
+      VxGlyph = glyph : VxFg = (d >> 4) & 7 : VxBg = 8
+      VideoBits()
     Else
       code = d & $3F
       inv = Bool((d & $40) <> 0)
@@ -235,10 +234,8 @@ Procedure VideoVdgText(addr.i, row.i)
       EndIf
       If row >= 1 And row <= 8 : glyph = VideoGlyph(glyph, row - 1) : Else : glyph = 0 : EndIf
       If inv : glyph = glyph ! $FF : EndIf
-      For bit = 7 To 0 Step -1
-        If (glyph >> bit) & 1 : c = c0 + 1 : Else : c = c0 : EndIf
-        VideoSamples(x) = c : VideoSamples(x + 1) = c : x = x + 2
-      Next
+      VxGlyph = glyph : VxFg = c0 + 1 : VxBg = c0
+      VideoBits()
     EndIf
   Next
 EndProcedure
@@ -272,13 +269,23 @@ EndProcedure
 ; (the 17 colours, RGB565) and VideoRgb (the same, as 0xRRGGBB for a PC).
 Global Dim VideoRgb.l(17)
 Procedure VideoRenderSamples(line.i)
-  Protected b.i, rowIndex.i, row.i, addr.i, x.i, i.i, offset.i, border.i, c.i
+  Protected b.i, rowIndex.i, row.i, addr.i, x.i, i.i, offset.i, border.i, c.i, serial.i
   VideoDecode()
   If VdLegacy : border = VideoLegacyBorder() : Else : border = Gime($A) & $3F : EndIf
-  For i = 0 To 15
-    VideoPal(i) = VideoColor(GimePal(i)) : VideoRgb(i) = VideoColorRgb(GimePal(i))
-  Next
-  VideoPal(16) = VideoColor(border) : VideoRgb(16) = VideoColorRgb(border)
+  ; the 17 colours are looked up again only when a palette register or the border changed (they were
+  ; looked up for every line: 7 of the 13 ms a pass took on the RP2350 to draw the demo's lines). The
+  ; serial is read BEFORE the copy, so a write by core 0 during it is seen on the next line.
+  serial = GimePalSerial
+  If serial <> VideoPalSerial
+    For i = 0 To 15
+      VideoPal(i) = VideoColor(GimePal(i)) : VideoRgb(i) = VideoColorRgb(GimePal(i))
+    Next
+    VideoPalSerial = serial
+  EndIf
+  If border <> VideoPalBorder
+    VideoPal(16) = VideoColor(border) : VideoRgb(16) = VideoColorRgb(border)
+    VideoPalBorder = border
+  EndIf
   b = line - VdBodyTop
   If b < 0 Or b >= VdBodyLines
     VideoBorderLine(16)
@@ -303,14 +310,8 @@ EndProcedure
 
 ; Render source line `line` into VideoOut (480 RGB565 pixels for the panel). Returns the line's hash.
 Procedure.l VideoRenderLine(line.i)
-  Protected x.i, sum.l
   VideoRenderSamples(line)
-  sum = 0
-  For x = 0 To 479
-    VideoOut(x) = VideoPal(VideoSamples(VideoMap(x)))
-    sum = ((sum << 1) | ((sum >> 31) & 1)) + VideoOut(x)
-  Next
-  ProcedureReturn sum
+  ProcedureReturn VideoScaleOut()
 EndProcedure
 
 ; One pass over the picture: render every line, send the ones that changed.

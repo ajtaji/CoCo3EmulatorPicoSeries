@@ -19,6 +19,7 @@ XIncludeFile "../../src/say_decl.pmi"
 XIncludeFile "../../src/cpu_none.pmi"
 XIncludeFile "../../src/machine.pmi"
 XIncludeFile "../../src/video.pmi"
+XIncludeFile "../../src/video_portable.pmi"
 XIncludeFile "../../src/keyboard.pmi"
 XIncludeFile "../../src/sound.pmi"
 XIncludeFile "../../src/disk.pmi"
@@ -73,13 +74,13 @@ Procedure DiagSetMode(m.i)
           DiagPoke($6C000 + (y * 40 + x) * 2 + 1, i)
         Next
       Next
-      For i = 0 To 15 : GimePal(i) = PeekA(?DiagRgb + i) : Next
+      For i = 0 To 15 : GimePal(i) = PeekA(?DiagRgb + i) : Next : GimePalSerial = GimePalSerial + 1   ; (the renderer looks the palette up again only when this moves)
       Say("MODE 1 gime text 40x24 attributes") : Eol()
     Case 2
       ; GIME 80 x 24 text, no attributes
       Gime(0) = $4C : Gime(8) = $03 : Gime(9) = $14 : Gime($D) = $D8 : Gime($E) = 0 : Gime($F) = 0
       For i = 0 To 80 * 24 - 1 : DiagPoke($6C000 + i, 32 + (i % 95)) : Next
-      GimePal(0) = 0 : GimePal(1) = $3F
+      GimePal(0) = 0 : GimePal(1) = $3F : GimePalSerial = GimePalSerial + 1   ; (the renderer looks the palette up again only when this moves)
       Say("MODE 2 gime text 80x24") : Eol()
     Case 3
       ; GIME 320 x 192 x 16: 16 vertical colour bars
@@ -87,7 +88,7 @@ Procedure DiagSetMode(m.i)
       For y = 0 To 191
         For x = 0 To 159 : DiagPoke($60000 + y * 160 + x, ((x / 10) * $11) & $FF) : Next
       Next
-      For i = 0 To 15 : GimePal(i) = PeekA(?DiagRgb + i) : Next
+      For i = 0 To 15 : GimePal(i) = PeekA(?DiagRgb + i) : Next : GimePalSerial = GimePalSerial + 1   ; (the renderer looks the palette up again only when this moves)
       Say("MODE 3 gime graphics 320x192x16 bars, white border") : Eol()
     Case 4
       ; GIME 640 x 225 x 4: diagonal lines
@@ -97,7 +98,7 @@ Procedure DiagSetMode(m.i)
         x = (y * 2) % 640
         DiagPoke($60000 + y * 160 + x / 4, 3 << (6 - (x & 3) * 2))
       Next
-      GimePal(0) = 0 : GimePal(1) = $24 : GimePal(2) = $12 : GimePal(3) = $3F
+      GimePal(0) = 0 : GimePal(1) = $24 : GimePal(2) = $12 : GimePal(3) = $3F : GimePalSerial = GimePalSerial + 1   ; (the renderer looks the palette up again only when this moves)
       Say("MODE 4 gime graphics 640x225x4 diagonal") : Eol()
     Case 5
       ; VDG semigraphics 4 colour blocks and a 256 x 192 resolution graphics screen top half

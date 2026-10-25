@@ -1,0 +1,53 @@
+; The Thumb-2 check build only (tools/vcheck_build.py makes it): every call of the four renderer kernels
+; runs the PureMetal version (Port*) and the Thumb-2 version (T2*) on the same inputs - graphics from a
+; snapshot of its source bytes, which core 0 may be writing - and compares what they wrote.
+; VcCalls(k) / VcBad(k): 0 scale, 1 bits, 2 graphics, 3 fill. tests/vcheck.txt reads them.
+Global Dim VcCalls.i(4)
+Global Dim VcBad.i(4)
+Global Dim VcSamples.a(640)
+Global Dim VcOut.u(480)
+Global Dim VcSrc.a(256)
+Procedure.l VideoScaleOut()
+  Protected h1.l, h2.l, x.i, bad.i
+  h1 = PortScaleOut()
+  For x = 0 To 479 : VcOut(x) = VideoOut(x) : Next
+  h2 = T2ScaleOut()
+  If h1 <> h2 : bad = 1 : EndIf
+  For x = 0 To 479 : If VcOut(x) <> VideoOut(x) : bad = 1 : EndIf : Next
+  VcCalls(0) = VcCalls(0) + 1 : VcBad(0) = VcBad(0) + bad
+  ProcedureReturn h2
+EndProcedure
+Procedure VideoBits()
+  Protected x0.i, x1.i, x.i, bad.i
+  x0 = VxX
+  PortBits()
+  x1 = VxX
+  For x = x0 To x1 - 1 : VcSamples(x) = VideoSamples(x) : VideoSamples(x) = 255 : Next
+  VxX = x0
+  T2Bits()
+  If VxX <> x1 : bad = 1 : EndIf
+  For x = x0 To x1 - 1 : If VcSamples(x) <> VideoSamples(x) : bad = 1 : EndIf : Next
+  VcCalls(1) = VcCalls(1) + 1 : VcBad(1) = VcBad(1) + bad
+EndProcedure
+Procedure VideoGraphicsRun()
+  Protected x0.i, x1.i, x.i, bad.i, i.i
+  For i = 0 To VxCount - 1 : VcSrc(i) = PeekA(VxSrc + i) : Next
+  VxSrc = @VcSrc(0)
+  x0 = VxX
+  PortGraphicsRun()
+  x1 = VxX
+  For x = x0 To x1 - 1 : VcSamples(x) = VideoSamples(x) : VideoSamples(x) = 255 : Next
+  VxX = x0
+  T2GraphicsRun()
+  If VxX <> x1 : bad = 1 : EndIf
+  For x = x0 To x1 - 1 : If VcSamples(x) <> VideoSamples(x) : bad = 1 : EndIf : Next
+  VcCalls(2) = VcCalls(2) + 1 : VcBad(2) = VcBad(2) + bad
+EndProcedure
+Procedure VideoFill(index.i)
+  Protected x.i, bad.i
+  PortFill(index)
+  For x = 0 To 639 : VcSamples(x) = VideoSamples(x) : VideoSamples(x) = 255 : Next
+  T2Fill(index)
+  For x = 0 To 639 : If VcSamples(x) <> VideoSamples(x) : bad = 1 : EndIf : Next
+  VcCalls(3) = VcCalls(3) + 1 : VcBad(3) = VcBad(3) + bad
+EndProcedure

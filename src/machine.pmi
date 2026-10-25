@@ -507,6 +507,11 @@ Procedure.i GimeBodyTop()
   ProcedureReturn 25
 EndProcedure
 
+DataSection
+  GimeBodyEnd:                           ; the line the body ends on, by $FF99 bits 6-5 (00, 01, 10, 11)
+  Data.a 217, 223, 217, 233
+EndDataSection
+
 Procedure.i GimeBodyLines()
   Select Gime(9) & $60
     Case $20 : ProcedureReturn 200
@@ -525,10 +530,12 @@ Procedure CocoEndLine()
   If CocoLine >= #GIME_FRAME_LINES
     CocoLine = 0 : CocoFrames = CocoFrames + 1
   EndIf
-  ; HSYNC on PIA0 CA1, both edges every line; HBORD each line
-  PiaC1(0, 0, 1) : PiaC1(0, 0, 0)
+  ; HSYNC on PIA0 CA1, both edges every line: whichever edge CRA bit 1 picks is one of the two, so its
+  ; flag is set every line (PiaC1(0, 0, 1) : PiaC1(0, 0, 0), in one step); HBORD each line
+  PiaCrA(0) = PiaCrA(0) | $80
   If (Gime(2) | Gime(3)) & #GIRQ_HBORD : GimeEdge(#GIRQ_HBORD) : EndIf
-  bottom = GimeBodyTop() + GimeBodyLines()
+  ; GimeBodyTop() + GimeBodyLines() for the LPF bits of $FF99 (25 + 192, 23 + 200, 8 + 225)
+  bottom = PeekA(?GimeBodyEnd + ((Gime(9) >> 5) & 3))
   If CocoLine = bottom
     PiaC1(0, 1, 1)                       ; field sync falls
     GimeEdge(#GIRQ_VBORD)

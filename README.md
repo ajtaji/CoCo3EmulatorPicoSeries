@@ -83,6 +83,28 @@ status line read over USB by `tools/board.py`; the scripts are in `tests/`.
 - **RP2350**: the same tests on an Adafruit Feather RP2350 HSTX (the Pico 2 W build, 150 MHz, no panel - the
   picture read over USB): BASIC boots and runs the program, the TIMER loop counts **910** as on the Pico W and the
   PC, and the demo LOADMs from its flash disk and runs; at 0.89 MHz the machine uses 23% of core 0.
+- **Thumb-2 on the RP2350 (2026-10-25).** The renderer's four inner loops - the 640 -> 480 scale with its
+  hash, the GIME graphics bytes, the glyph dots of every text mode, the border fill - are Cortex-M33
+  assembly on the Pico 2 builds (`src/video_t2.pmi`) and PureMetal on the RP2040 and the PC
+  (`src/video_portable.pmi`), both run from SRAM. Same tests, same boards, compiler `9777f6cd6`, 6809 core
+  `61d7444`; core 1's figure is whole 240-line pictures rendered a second (the panel can show 60):
+
+  | | before | after |
+  |---|---:|---:|
+  | **Feather RP2350**, render, BASIC text | 16.5 /s | **44.5 /s** (2.7x) |
+  | **Feather RP2350**, render, the demo (320 x 192 x 16) | 11.5 /s | **59.7 /s** (5.2x) |
+  | Feather RP2350, unthrottled 0.89 / 1.79 MHz | 3,420 / 4,235 kHz | 3,525 / 4,255 kHz |
+  | **Pico W RP2040** (Thumb-1, must not regress), render, text | 16.4 /s | 16.5-17.6 /s |
+  | Pico W RP2040, unthrottled 0.89 / 1.79 MHz | 3,130 / 4,101 kHz | **3,450 / 4,362 kHz** (+10% / +6%) |
+
+  On the RP2040 the gain is from the kernels moving into SRAM (they had shared the flash cache with core
+  0) and from a scanline's end doing less: HSYNC sets CA1's flag in one step, the body's end is a table.
+  The palette is looked up again only when a palette register moves. Proof that the assembly draws what
+  the PureMetal draws: `tools/vcheck_build.py` makes a build that runs both on every call, on the same
+  inputs, and counts differences - through every mode BASIC reaches and the demo (`tests/vcheck.txt`):
+  199,297 scale calls, 2,471,728 glyph rows, 84,942 graphics runs, 39,864 fills, **0 differences**. The
+  RP2040's six mode pictures (`tests/video_modes.txt`) are byte-identical to before; BASIC, the TIMER loop
+  (910) and the demo pass on both chips.
 - Disk: on a blank disk in flash a typed program is SAVEd, wiped, LOADed and RUN (`tests/disk.txt`); after
   a reflash and cold boot `DIR` still lists it and it LOADs and RUNs (`tests/disk_persist.txt`).
 

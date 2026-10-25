@@ -38,6 +38,10 @@ Declare Eol()
 Macro Say(t)
   HostOut(t)
 EndMacro
+; A Pico's ProcedureRAM (code run from SRAM, video_portable.pmi) is an ordinary procedure on a PC.
+Macro ProcedureRAM
+  Procedure
+EndMacro
 
 ; The machine, as on the Pico, with a PC's memory.
 #COCO_RAM_PAGES = 64                     ; 512 KB
@@ -60,6 +64,7 @@ CompilerElse
 CompilerEndIf
 XIncludeFile "../src/machine.pmi"
 XIncludeFile "../src/video.pmi"
+XIncludeFile "../src/video_portable.pmi"
 XIncludeFile "../src/keyboard.pmi"
 XIncludeFile "../src/sound.pmi"
 XIncludeFile "../src/disk.pmi"

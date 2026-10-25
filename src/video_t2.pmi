@@ -1,0 +1,191 @@
+; The renderer's four inner loops in Cortex-M33 (Thumb-2) assembly, for the RP2350 builds only (Ron,
+; 2026-10-25: Thumb-2 for speed on the Pico 2 series). video_portable.pmi is the same four in
+; PureMetal for the RP2040 and the PC; both must do the same thing, and the tests run on both chips.
+;
+; They run on core 1 (VideoFrame). The 6809 core reserves r4, r5 and r8-r11 for CORE 0's code; core 1
+; has its own registers, so these blocks may use r4-r6 (the compiler saves what a block names) and
+; r12, never r7 (the frame) or r8-r11 (reserved program-wide). Inputs come in the Vx Globals. Like the
+; PureMetal ones they run from SRAM (ProcedureRAM), clear of the flash cache core 0's code uses.
+;
+; Measured on the Feather RP2350 (COM20) per 240-line pass, before: the 640 -> 480 scale 34 ms (44
+; cycles a pixel), drawing GIME graphics 50 ms, BASIC's text 26 ms.
+
+ProcedureRAM.l VideoScaleOut()
+  ; 160 groups of four samples: samples 0, 1 and 2 of each through VideoPal to VideoOut, sample 3
+  ; skipped (640 -> 480); the hash is rotate left one and add, pixel by pixel, as video_portable.pmi.
+  ASM
+    ldr r0, =global_videosamples
+    ldr r1, =global_videoout
+    ldr r2, =global_videopal
+    movs r3, #160
+    movs r6, #0
+  t2_scale_loop:
+    ldrb r12, [r0], #1
+    ldr r12, [r2, r12, lsl #2]
+    strh r12, [r1], #2
+    ror r6, r6, #31
+    add r6, r6, r12
+    ldrb r12, [r0], #1
+    ldr r12, [r2, r12, lsl #2]
+    strh r12, [r1], #2
+    ror r6, r6, #31
+    add r6, r6, r12
+    ldrb r12, [r0], #2
+    ldr r12, [r2, r12, lsl #2]
+    strh r12, [r1], #2
+    ror r6, r6, #31
+    add r6, r6, r12
+    subs r3, r3, #1
+    bne t2_scale_loop
+    ldr r0, =global_vxhash
+    str r6, [r0]
+  EndASM
+  ProcedureReturn VxHash
+EndProcedure
+
+ProcedureRAM VideoBits()
+  ; r0 = the glyph in bits 31-24 with a marker at bit 23: after eight shifts it is exactly $80000000.
+  ; VxScale is 1 or 2 (VideoDecode gives text no other); 2 stores both samples as one halfword.
+  ASM
+    ldr r0, =global_vxglyph
+    ldr r0, [r0]
+    lsl r0, r0, #24
+    orr r0, r0, #0x00800000
+    ldr r1, =global_vxfg
+    ldr r1, [r1]
+    ldr r2, =global_vxbg
+    ldr r2, [r2]
+    ldr r3, =global_vxx
+    ldr r3, [r3]
+    ldr r6, =global_videosamples
+    add r6, r6, r3
+    ldr r3, =global_vxscale
+    ldr r3, [r3]
+    cmp r3, #2
+    bne t2_bits_one
+    orr r1, r1, r1, lsl #8
+    orr r2, r2, r2, lsl #8
+  t2_bits_two:
+    cmp r0, #0x80000000
+    beq t2_bits_done
+    lsls r0, r0, #1
+    ite cs
+    movcs r12, r1
+    movcc r12, r2
+    strh r12, [r6], #2
+    b t2_bits_two
+  t2_bits_one:
+    cmp r0, #0x80000000
+    beq t2_bits_done
+    lsls r0, r0, #1
+    ite cs
+    movcs r12, r1
+    movcc r12, r2
+    strb r12, [r6], #1
+    b t2_bits_one
+  t2_bits_done:
+  EndASM
+  VxX = VxX + 8 * VxScale
+EndProcedure
+
+ProcedureRAM VideoGraphicsRun()
+  ; r1 = source, r3 = its end, r2 = destination, r5 = VdScale, r6 = VxBase, r0 = the byte being taken
+  ; apart (bits 31-24, marker at bit 23 as in VideoBits), r12 = a pixel's palette index, r4 = the end
+  ; of its samples. One loop for each of 4, 2 and 1 bits a pixel, so the shifts are constants.
+  ASM
+    ldr r1, =global_vxsrc
+    ldr r1, [r1]
+    ldr r3, =global_vxcount
+    ldr r3, [r3]
+    add r3, r3, r1
+    ldr r2, =global_vxx
+    ldr r2, [r2]
+    ldr r0, =global_videosamples
+    add r2, r2, r0
+    ldr r5, =global_vdscale
+    ldr r5, [r5]
+    ldr r6, =global_vxbase
+    ldr r6, [r6]
+    ldr r0, =global_vdbpp
+    ldr r0, [r0]
+    cmp r0, #4
+    beq t2_g4_byte
+    cmp r0, #2
+    beq t2_g2_byte
+    b t2_g1_byte
+  t2_g4_pix:
+    cmp r0, #0x80000000
+    beq t2_g4_byte
+    lsr r12, r0, #28
+    add r12, r12, r6
+    lsl r0, r0, #4
+    add r4, r2, r5
+  t2_g4_s:
+    strb r12, [r2], #1
+    cmp r2, r4
+    bne t2_g4_s
+    b t2_g4_pix
+  t2_g4_byte:
+    cmp r1, r3
+    beq t2_g_done
+    ldrb r0, [r1], #1
+    lsl r0, r0, #24
+    orr r0, r0, #0x00800000
+    b t2_g4_pix
+  t2_g2_pix:
+    cmp r0, #0x80000000
+    beq t2_g2_byte
+    lsr r12, r0, #30
+    add r12, r12, r6
+    lsl r0, r0, #2
+    add r4, r2, r5
+  t2_g2_s:
+    strb r12, [r2], #1
+    cmp r2, r4
+    bne t2_g2_s
+    b t2_g2_pix
+  t2_g2_byte:
+    cmp r1, r3
+    beq t2_g_done
+    ldrb r0, [r1], #1
+    lsl r0, r0, #24
+    orr r0, r0, #0x00800000
+    b t2_g2_pix
+  t2_g1_pix:
+    cmp r0, #0x80000000
+    beq t2_g1_byte
+    lsr r12, r0, #31
+    add r12, r12, r6
+    lsl r0, r0, #1
+    add r4, r2, r5
+  t2_g1_s:
+    strb r12, [r2], #1
+    cmp r2, r4
+    bne t2_g1_s
+    b t2_g1_pix
+  t2_g1_byte:
+    cmp r1, r3
+    beq t2_g_done
+    ldrb r0, [r1], #1
+    lsl r0, r0, #24
+    orr r0, r0, #0x00800000
+    b t2_g1_pix
+  t2_g_done:
+  EndASM
+  VxX = VxX + VxCount * (8 / VdBpp) * VdScale
+EndProcedure
+
+ProcedureRAM VideoFill(index.i)
+  VxFg = index * $01010101
+  ; 640 samples, four at a time
+  ASM
+    ldr r0, =global_vxfg
+    ldr r1, [r0]
+    ldr r0, =global_videosamples
+    movs r2, #160
+  t2_fill_loop:
+    str r1, [r0], #4
+    subs r2, r2, #1
+    bne t2_fill_loop
+  EndASM
+EndProcedure

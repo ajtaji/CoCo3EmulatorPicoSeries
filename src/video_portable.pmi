@@ -1,0 +1,66 @@
+; The four inner loops of the renderer (video.pmi), in PureMetal / PureBasic: the RP2040 (Thumb-1),
+; the PC and the diagnostics include this file. The RP2350 builds include video_t2.pmi instead, the
+; same four in Cortex-M33 assembly. Their inputs are the Vx Globals (an ASM block reaches a Global by
+; name; a parameter lives in the procedure's stack frame), and both files must do the same thing.
+; THEY RUN FROM SRAM (ProcedureRAM; the PC's CoCo3.pb makes that word an ordinary Procedure): from flash
+; they shared the RP2040's XIP cache with core 0's code, and the render ran at 12 passes a second while
+; core 0 waited out its frames, against 16.6 from SRAM (and core 0's emulation 10% faster), measured.
+
+; VideoSamples (640 palette indices) to VideoOut (480 RGB565 pixels: samples 0, 1 and 2 of every four)
+; through VideoPal; returns the line's hash, a rotate-left-and-add of its pixels.
+ProcedureRAM.l VideoScaleOut()
+  Protected x.i, sum.l
+  sum = 0
+  For x = 0 To 479
+    VideoOut(x) = VideoPal(VideoSamples(VideoMap(x)))
+    sum = ((sum << 1) | ((sum >> 31) & 1)) + VideoOut(x)
+  Next
+  ProcedureReturn sum
+EndProcedure
+
+; Eight dots of VxGlyph (bit 7 first) at VideoSamples(VxX): VxFg where a bit is set, VxBg where it is
+; clear, each VxScale (1 or 2) samples wide. VxX moves on past them.
+; (The Globals are taken into locals first: on the RP2040 a loop over Globals ran the render 20% slower.)
+ProcedureRAM VideoBits()
+  Protected bit.i, c.i, x.i, glyph.i, fg.i, bg.i
+  x = VxX : glyph = VxGlyph : fg = VxFg : bg = VxBg
+  If VxScale = 2
+    For bit = 7 To 0 Step -1
+      If (glyph >> bit) & 1 : c = fg : Else : c = bg : EndIf
+      VideoSamples(x) = c : VideoSamples(x + 1) = c : x = x + 2
+    Next
+  Else
+    For bit = 7 To 0 Step -1
+      If (glyph >> bit) & 1 : c = fg : Else : c = bg : EndIf
+      VideoSamples(x) = c : x = x + 1
+    Next
+  EndIf
+  VxX = x
+EndProcedure
+
+; VxCount bytes of graphics from the SRAM address VxSrc, VdBpp bits a pixel (high bits first), each
+; pixel VxBase + its bits, VdScale samples wide, at VideoSamples(VxX). VxX moves on past them.
+ProcedureRAM VideoGraphicsRun()
+  Protected i.i, byte.i, k.i, c.i, s.i, shift.i, mask.i, ppb.i, x.i, src.i, base.i, bpp.i, scale.i
+  x = VxX : src = VxSrc : base = VxBase : bpp = VdBpp : scale = VdScale
+  ppb = 8 / bpp
+  mask = (1 << bpp) - 1
+  For i = 0 To VxCount - 1
+    byte = PeekA(src + i)
+    shift = 8 - bpp
+    For k = 1 To ppb
+      c = base + ((byte >> shift) & mask)
+      For s = 1 To scale
+        VideoSamples(x) = c : x = x + 1
+      Next
+      shift = shift - bpp
+    Next
+  Next
+  VxX = x
+EndProcedure
+
+; All 640 samples one palette index (the border).
+ProcedureRAM VideoFill(index.i)
+  Protected x.i
+  For x = 0 To 639 : VideoSamples(x) = index : Next
+EndProcedure
