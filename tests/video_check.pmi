@@ -1,5 +1,5 @@
 ; The Thumb-2 check build only (tools/vcheck_build.py makes it): every call of the four renderer kernels
-; runs the PureMetal version (Port*) and the Thumb-2 version (T2*) on the same inputs - graphics from a
+; runs the PureMetal version (Port*) and the assembly version (Fast*: video_t2.pmi on an RP2350, video_t1.pmi on an RP2040) on the same inputs - graphics from a
 ; snapshot of its source bytes, which core 0 may be writing - and compares what they wrote.
 ; VcCalls(k) / VcBad(k): 0 scale, 1 bits, 2 graphics, 3 fill, 4 crc. tests/vcheck.txt reads them.
 Global Dim VcCalls.i(5)
@@ -10,10 +10,10 @@ Global Dim VcSrc.a(256)
 Procedure.l VideoScaleOut()
   Protected h1.l, h2.l, x.i, bad.i
   h1 = PortScaleOut()
-  For x = 0 To 479 : VcOut(x) = VideoOut(x) : Next
-  h2 = T2ScaleOut()
+  For x = 0 To 479 : VcOut(x) = VideoOut(VxOutOff + x) : Next
+  h2 = FastScaleOut()
   If h1 <> h2 : bad = 1 : EndIf
-  For x = 0 To 479 : If VcOut(x) <> VideoOut(x) : bad = 1 : EndIf : Next
+  For x = 0 To 479 : If VcOut(x) <> VideoOut(VxOutOff + x) : bad = 1 : EndIf : Next
   VcCalls(0) = VcCalls(0) + 1 : VcBad(0) = VcBad(0) + bad
   ProcedureReturn h2
 EndProcedure
@@ -24,7 +24,7 @@ Procedure VideoBits()
   x1 = VxX
   For x = x0 To x1 - 1 : VcSamples(x) = VideoSamples(x) : VideoSamples(x) = 255 : Next
   VxX = x0
-  T2Bits()
+  FastBits()
   If VxX <> x1 : bad = 1 : EndIf
   For x = x0 To x1 - 1 : If VcSamples(x) <> VideoSamples(x) : bad = 1 : EndIf : Next
   VcCalls(1) = VcCalls(1) + 1 : VcBad(1) = VcBad(1) + bad
@@ -38,7 +38,7 @@ Procedure VideoGraphicsRun()
   x1 = VxX
   For x = x0 To x1 - 1 : VcSamples(x) = VideoSamples(x) : VideoSamples(x) = 255 : Next
   VxX = x0
-  T2GraphicsRun()
+  FastGraphicsRun()
   If VxX <> x1 : bad = 1 : EndIf
   For x = x0 To x1 - 1 : If VcSamples(x) <> VideoSamples(x) : bad = 1 : EndIf : Next
   ; and against the pixel-by-pixel reference, without the look-up table
@@ -55,7 +55,7 @@ Procedure VideoFill(index.i)
   Protected x.i, bad.i
   PortFill(index)
   For x = 0 To 639 : VcSamples(x) = VideoSamples(x) : VideoSamples(x) = 255 : Next
-  T2Fill(index)
+  FastFill(index)
   For x = 0 To 639 : If VcSamples(x) <> VideoSamples(x) : bad = 1 : EndIf : Next
   VcCalls(3) = VcCalls(3) + 1 : VcBad(3) = VcBad(3) + bad
 EndProcedure
@@ -68,7 +68,7 @@ Procedure VideoCrc()
   PortCrc()
   h1 = VxHash
   VxHash = h0
-  T2Crc()
+  FastCrc()
   VcCalls(4) = VcCalls(4) + 1
   If VxHash <> h1 : VcBad(4) = VcBad(4) + 1 : EndIf
 EndProcedure

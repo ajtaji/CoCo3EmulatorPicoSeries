@@ -16,42 +16,8 @@ Procedure VideoBegin()
   CompilerEndIf
 EndProcedure
 
-; ROWS GO OUT BY DMA WHILE THE NEXT LINE IS DRAWN (#COCO_PANEL_ASYNC). Tft796BlitRect waits for each
-; row's 960 bytes (102 us at 75 MHz) with core 1 doing nothing: on the demo, whose rolling palette changes
-; every band, 19 of every 39 ms a picture (25.7 a second). Here a row is copied into one of two buffers,
-; the window is set once the row before it has gone, and the DMA is started and left running; the next
-; row (or VideoSendDone at the picture's end) waits for it. The library's own registers and steps
-; (spi.pico2's SpiDmaSend16, without its wait).
-#COCO_PANEL_ASYNC = 1
-Global Dim CocoRowBuf.u(960)
-Global CocoRowPending.i, CocoRowSel.i, CocoRowI.i, CocoRowLost.i
-Procedure CocoRowFinish()
-  If CocoRowPending
-    If SpiDmaWaitFor(0, #VIDEO_OUT_W) = 0 : SpiDmaAbort(0) : CocoRowLost = CocoRowLost + 1 : EndIf
-    SpiDmaRestore(0)
-    Tft796PinSet(tft796_cs, 1)
-    CocoRowPending = 0
-  EndIf
-EndProcedure
-Procedure CocoRowSend(y.i, pixels.i)
-  Protected dst.i, base.i
-  dst = @CocoRowBuf(CocoRowSel * #VIDEO_OUT_W)
-  For CocoRowI = 0 To #VIDEO_OUT_W / 2 - 1 : PokeL(dst + CocoRowI * 4, PeekL(pixels + CocoRowI * 4)) : Next
-  CocoRowFinish()
-  If SpiDmaInit() = 0 : ProcedureReturn : EndIf
-  Tft796Window(0, y, #VIDEO_OUT_W - 1, y)
-  Tft796PinSet(tft796_dc, 1)
-  Tft796PinSet(tft796_cs, 0)
-  base = __SpiBase(0)
-  SpiSetBits(0, 16)
-  PokeL(base + 36, PeekL(base + 36) | #SPI_SSPDMACR_TXDMAE)
-  PokeL(#SPI_DMA_CH0_READ, dst)
-  PokeL(#SPI_DMA_CH0_WRITE, base + 8)
-  PokeL(#SPI_DMA_CH0_COUNT, #VIDEO_OUT_W)
-  PokeL(#SPI_DMA_CH0_CTRL, #SPI_DMA_EN | #SPI_DMA_SIZE_HALF | #SPI_DMA_INCR_READ | (SpiDmaTreq(0) << #SPI_DMA_TREQ_SHIFT))
-  CocoRowPending = 1
-  CocoRowSel = CocoRowSel ! 1
-EndProcedure
+#COCO_PANEL_ASYNC = 1                    ; rows go out by DMA while the next line is drawn (board_common.pmi)
+#COCO_DMA_TREQ_SHIFT = 17                ; the RP2350's DMA CTRL TREQ_SEL field (spi.pico2's #SPI_DMA_TREQ_SHIFT)
 
 Procedure.i CocoLaunchCore1()
   McCore1ReleaseHold()

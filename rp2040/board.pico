@@ -16,7 +16,8 @@
 #COCO_DISK_OFFSET = $150000
 #COCO_DISK_FLASH_SLOTS = 4
 #COCO_HEADLESS = 0
-#COCO_PANEL_ASYNC = 0                    ; rows are sent one at a time, waiting (Tft796BlitRect)
+#COCO_PANEL_ASYNC = 1                    ; rows go out by DMA while the next line is drawn (board_common.pmi)
+#COCO_DMA_TREQ_SHIFT = 15                ; the RP2040's DMA CTRL TREQ_SEL field (spi.pico's SpiDmaSend16)
 #COCO_SRAM_IMAGES = 0                    ; the ROMs and disks are in flash (the RP2040 has no SRAM to spare)
 ; The speaker link key the NES firmware keeps ("BTK1"), read only.
 #COCO_BTKEY_FLASH = $101FF000

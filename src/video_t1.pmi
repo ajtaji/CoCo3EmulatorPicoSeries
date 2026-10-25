@@ -1,0 +1,190 @@
+; The renderer's inner loops for the RP2040 (Cortex-M0+, Thumb-1): the 640 -> 480 scale with its hash,
+; the graphics look-up table copy, the border fill and the line-key CRC in assembly; the text glyph dots
+; and the graphics modes the table does not cover in PureMetal, as video_portable.pmi has them (both files
+; must do the same thing: tools/vcheck_build.py --target rp2040 makes the build that compares them on
+; silicon). video_t2.pmi is the RP2350's; the PC keeps video_portable.pmi.
+;
+; Measured on the Pico W (COM7) before (PureMetal): the demo's pictures at 13.7 a second with core 1 100%
+; busy - the scale alone 44 cycles a pixel. They run on core 1, from SRAM; the blocks use r0-r6 (the
+; compiler saves what they name; r4 and r5 are core 0's 6809 registers, core 1 has its own), never r7
+; (the frame). The M0+ cannot make an unaligned word or halfword access: VideoInit checks the arrays.
+
+ProcedureRAM.l VideoScaleOut()
+  ; 160 groups of four samples: 0, 1 and 2 through VideoPal to VideoOut, 3 skipped. (No hash: see
+  ; VideoFrame.)
+  ASM
+    ldr r0, =global_videosamples
+    ldr r1, =global_videoout
+    ldr r3, =global_vxoutoff
+    ldr r3, [r3]
+    lsls r3, r3, #1
+    adds r1, r1, r3
+    ldr r2, =global_videopal
+    movs r3, #160
+    movs r6, #0
+    movs r5, #31
+  t1_scale_loop:
+    ldrb r4, [r0, #0]
+    lsls r4, r4, #2
+    ldr r4, [r2, r4]
+    strh r4, [r1, #0]
+    ldrb r4, [r0, #1]
+    lsls r4, r4, #2
+    ldr r4, [r2, r4]
+    strh r4, [r1, #2]
+    ldrb r4, [r0, #2]
+    lsls r4, r4, #2
+    ldr r4, [r2, r4]
+    strh r4, [r1, #4]
+    adds r0, #4
+    adds r1, #6
+    subs r3, #1
+    bne t1_scale_loop
+    ldr r0, =global_vxhash
+    str r6, [r0]
+  EndASM
+  ProcedureReturn VxHash
+EndProcedure
+
+; Eight dots of VxGlyph at VideoSamples(VxX), VxScale (1 or 2) samples each (as video_portable.pmi).
+ProcedureRAM VideoBits()
+  Protected bit.i, c.i, x.i, glyph.i, fg.i, bg.i
+  x = VxX : glyph = VxGlyph : fg = VxFg : bg = VxBg
+  If VxScale = 2
+    For bit = 7 To 0 Step -1
+      If (glyph >> bit) & 1 : c = fg : Else : c = bg : EndIf
+      VideoSamples(x) = c : VideoSamples(x + 1) = c : x = x + 2
+    Next
+  Else
+    For bit = 7 To 0 Step -1
+      If (glyph >> bit) & 1 : c = fg : Else : c = bg : EndIf
+      VideoSamples(x) = c : x = x + 1
+    Next
+  EndIf
+  VxX = x
+EndProcedure
+
+; VxCount graphics bytes from VxSrc at VideoSamples(VxX): through VideoLut (VxWords words a byte) in
+; assembly, else pixel by pixel (as video_portable.pmi).
+ProcedureRAM VideoGraphicsRun()
+  Protected i.i, byte.i, k.i, c.i, s.i, shift.i, mask.i, ppb.i, x.i, src.i, base.i, bpp.i, scale.i
+  If VxWords
+    ; r1 = source, r3 = its end, r2 = destination, r6 = the table (16 bytes an entry), r4 r5 = a word pair
+    ASM
+      ldr r1, =global_vxsrc
+      ldr r1, [r1]
+      ldr r3, =global_vxcount
+      ldr r3, [r3]
+      adds r3, r3, r1
+      ldr r2, =global_vxx
+      ldr r2, [r2]
+      ldr r0, =global_videosamples
+      adds r2, r2, r0
+      ldr r6, =global_videolut
+      ldr r0, =global_vxwords
+      ldr r0, [r0]
+      cmp r0, #1
+      bne t1_lut2
+    t1_lut1:
+      cmp r1, r3
+      beq t1_lut_done
+      ldrb r0, [r1, #0]
+      adds r1, #1
+      lsls r0, r0, #4
+      ldr r4, [r6, r0]
+      str r4, [r2, #0]
+      adds r2, #4
+      b t1_lut1
+    t1_lut2:
+      cmp r0, #2
+      bne t1_lut4
+    t1_lut2_loop:
+      cmp r1, r3
+      beq t1_lut_done
+      ldrb r0, [r1, #0]
+      adds r1, #1
+      lsls r0, r0, #4
+      adds r0, r0, r6
+      ldmia r0!, {r4, r5}
+      stmia r2!, {r4, r5}
+      b t1_lut2_loop
+    t1_lut4:
+      cmp r1, r3
+      beq t1_lut_done
+      ldrb r0, [r1, #0]
+      adds r1, #1
+      lsls r0, r0, #4
+      adds r0, r0, r6
+      ldmia r0!, {r4, r5}
+      stmia r2!, {r4, r5}
+      ldmia r0!, {r4, r5}
+      stmia r2!, {r4, r5}
+      b t1_lut4
+    t1_lut_done:
+    EndASM
+    VxX = VxX + VxCount * VxWords * 4
+    ProcedureReturn
+  EndIf
+  x = VxX : src = VxSrc : base = VxBase : bpp = VdBpp : scale = VdScale
+  ppb = 8 / bpp
+  mask = (1 << bpp) - 1
+  For i = 0 To VxCount - 1
+    byte = PeekA(src + i)
+    shift = 8 - bpp
+    For k = 1 To ppb
+      c = base + ((byte >> shift) & mask)
+      For s = 1 To scale
+        VideoSamples(x) = c : x = x + 1
+      Next
+      shift = shift - bpp
+    Next
+  Next
+  VxX = x
+EndProcedure
+
+; All 640 samples one palette index, sixteen bytes a store.
+ProcedureRAM VideoFill(index.i)
+  VxFg = index * $01010101
+  ASM
+    ldr r0, =global_vxfg
+    ldr r1, [r0]
+    mov r2, r1
+    mov r3, r1
+    mov r4, r1
+    ldr r0, =global_videosamples
+    movs r5, #40
+  t1_fill_loop:
+    stmia r0!, {r1, r2, r3, r4}
+    subs r5, #1
+    bne t1_fill_loop
+  EndASM
+EndProcedure
+
+; The CRC-32 of VxCount bytes at VxSrc carried on from VxHash (as video_portable.pmi).
+ProcedureRAM VideoCrc()
+  ; r0 = source, r1 = its end, r3 = the CRC, r6 = the table, r4 = a byte's entry
+  ASM
+    ldr r0, =global_vxsrc
+    ldr r0, [r0]
+    ldr r1, =global_vxcount
+    ldr r1, [r1]
+    adds r1, r1, r0
+    ldr r2, =global_vxhash
+    ldr r3, [r2]
+    ldr r6, =global_videocrctab
+  t1_crc_loop:
+    cmp r0, r1
+    beq t1_crc_done
+    ldrb r4, [r0, #0]
+    adds r0, #1
+    eors r4, r3
+    lsls r4, r4, #24
+    lsrs r4, r4, #22
+    ldr r4, [r6, r4]
+    lsrs r3, r3, #8
+    eors r3, r4
+    b t1_crc_loop
+  t1_crc_done:
+    str r3, [r2]
+  EndASM
+EndProcedure

@@ -12,10 +12,13 @@
 
 ProcedureRAM.l VideoScaleOut()
   ; 160 groups of four samples: samples 0, 1 and 2 of each through VideoPal to VideoOut, sample 3
-  ; skipped (640 -> 480); the hash is rotate left one and add, pixel by pixel, as video_portable.pmi.
+  ; skipped (640 -> 480). (No hash any more: see VideoFrame.)
   ASM
     ldr r0, =global_videosamples
     ldr r1, =global_videoout
+    ldr r3, =global_vxoutoff
+    ldr r3, [r3]
+    add r1, r1, r3, lsl #1
     ldr r2, =global_videopal
     movs r3, #160
     movs r6, #0
@@ -23,18 +26,12 @@ ProcedureRAM.l VideoScaleOut()
     ldrb r12, [r0], #1
     ldr r12, [r2, r12, lsl #2]
     strh r12, [r1], #2
-    ror r6, r6, #31
-    add r6, r6, r12
     ldrb r12, [r0], #1
     ldr r12, [r2, r12, lsl #2]
     strh r12, [r1], #2
-    ror r6, r6, #31
-    add r6, r6, r12
     ldrb r12, [r0], #2
     ldr r12, [r2, r12, lsl #2]
     strh r12, [r1], #2
-    ror r6, r6, #31
-    add r6, r6, r12
     subs r3, r3, #1
     bne t2_scale_loop
     ldr r0, =global_vxhash

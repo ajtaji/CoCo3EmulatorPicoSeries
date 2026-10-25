@@ -1,0 +1,36 @@
+# tests/vcheck.txt for the Pico W (COM7): its demo disk is in drive 1. Run on tools/vcheck_build.py --target rp2040.
+expect 15 disks: 1 1
+screen 20 \r\nOK +\r\n
+line PRINT "VDG TEXT";CHR$(128+16*3+5);CHR$(143);"inverse"
+wait 2
+cmd s
+line WIDTH 40:ATTR 3,2,U:PRINT "GIME 40":ATTR 1,0
+wait 3
+cmd s
+line WIDTH 80:PRINT "GIME 80 COLUMNS"
+wait 3
+cmd s
+line WIDTH 32
+wait 2
+line PMODE 4,1:PCLS:SCREEN 1,1:LINE(0,0)-(255,191),PSET:CIRCLE(128,96),60:FOR I=1 TO 300:NEXT
+wait 4
+cmd s
+line PMODE 3,1:PCLS 2:SCREEN 1,0:CIRCLE(128,96),40,3:FOR I=1 TO 300:NEXT
+wait 4
+cmd s
+line HSCREEN 1:HCIRCLE(80,96),50,3:FOR I=1 TO 300:NEXT
+wait 4
+cmd s
+line HSCREEN 2:HCIRCLE(160,96),60,9:HLINE(0,0)-(319,191),PSET:FOR I=1 TO 300:NEXT
+wait 4
+cmd s
+line HSCREEN 3:HCIRCLE(320,96),80,2:FOR I=1 TO 300:NEXT
+wait 4
+cmd s
+line HSCREEN 4:HCIRCLE(320,96),80,3:FOR I=1 TO 300:NEXT:HSCREEN 0
+wait 6
+cmd s
+line LOADM"1:COCO3DEM":EXEC
+wait 40
+cmd s
+expect 3 vcheck_bad=0 

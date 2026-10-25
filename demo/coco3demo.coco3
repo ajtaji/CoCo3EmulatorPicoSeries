@@ -9,7 +9,7 @@
 ; GIME's video start ($FF9D/$FF9E, in units of 8 bytes) at it.
 
 Global Dim scr.a(30736)                   ; 160 bytes x 192 lines, and room to start on 8 bytes
-Global frame.a, base.u, level.a, note.a, left.a, rest.a, half.a
+Global frame.a, base.u, level.a, note.a, left.a, rest.a, half.a, ro.a, q.u
 Global Dim pal.a(16)
 
 ; The tune: pairs of (timer value, frames). The timer counts at 3.58 MHz (279 ns) and the GIME reloads it with
@@ -45,6 +45,9 @@ DataSection
   ; GIME colours: black, then a ring of 14 for the bands, then white for the letters
   Colours:
   Data.a $00, $24, $26, $34, $36, $32, $12, $16, $1B, $09, $0B, $0D, $2D, $29, $20, $3F
+  Ring:                                          ; the 14 band colours twice, for the roll
+  Data.a $24, $26, $34, $36, $32, $12, $16, $1B, $09, $0B, $0D, $2D, $29, $20
+  Data.a $24, $26, $34, $36, $32, $12, $16, $1B, $09, $0B, $0D, $2D, $29, $20
 EndDataSection
 
 ; The fast timer's interrupt: one half of the tone's square wave on the DAC (PIA1 PA2-PA7).
@@ -166,11 +169,19 @@ Procedure Main()
   Repeat
     While frame = seen : Wend
     seen = frame
-    ; every other frame, turn the ring of band colours one step
+    ; every other frame, turn the ring of band colours one step: register i gets colour 1 + (i - 1 + ro)
+    ; mod 14. All 14 writes inside the vertical blank, as a CoCo 3 program rolls its palette: done with
+    ; an array (pal(i) = pal(i + 1)) they took this compiler's 6809 code most of two frames, so the
+    ; picture changed in every frame - more than a 480 x 320 SPI panel can be sent 60 times a second.
+    ; (Unrolled from a table holding the ring twice: a loop with a wrap test still took this compiler's
+    ; 6809 code more than a frame.)
     If (frame & 1) = 0
-      c = pal(1)
-      For i = 1 To 13 : pal(i) = pal(i + 1) : PokeA($FFB0 + i, pal(i)) : Next
-      pal(14) = c : PokeA($FFBE, c)
+      ro = ro + 1 : If ro = 14 : ro = 0 : EndIf
+      q = ?Ring + ro
+      PokeA($FFB1, PeekA(q)) : PokeA($FFB2, PeekA(q + 1)) : PokeA($FFB3, PeekA(q + 2)) : PokeA($FFB4, PeekA(q + 3))
+      PokeA($FFB5, PeekA(q + 4)) : PokeA($FFB6, PeekA(q + 5)) : PokeA($FFB7, PeekA(q + 6)) : PokeA($FFB8, PeekA(q + 7))
+      PokeA($FFB9, PeekA(q + 8)) : PokeA($FFBA, PeekA(q + 9)) : PokeA($FFBB, PeekA(q + 10)) : PokeA($FFBC, PeekA(q + 11))
+      PokeA($FFBD, PeekA(q + 12)) : PokeA($FFBE, PeekA(q + 13))
     EndIf
   ForEver
 EndProcedure

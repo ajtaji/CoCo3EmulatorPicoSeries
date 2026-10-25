@@ -129,6 +129,25 @@ status line read over USB by `tools/board.py`; the scripts are in `tests/`.
   slowly changing screen) is at the full 59.92 on every board. The Pico 2 W build takes its ROMs and the
   demo disk over USB into SRAM at boot (`rp2350/coco3.pico2w`, `tests/p2w_panel.txt`): a shared board's
   flash is full.
+
+  **Correction (2026-10-25, later): the panel figures for the demo above were wrong** - Ron saw that the Picos
+  did not scroll all the bars as the PC does. A row went to the panel only when a rotate-and-add hash of its
+  pixels changed, and that hash is `$FFFFFFF8` for every one-colour line whatever its colour: the colour
+  bands were never sent, only the rows with letters in them. Now a line is sent whenever its inputs (bytes,
+  mode, palette, border) change, and every line once a second; no pixel hash is trusted. With every row
+  really sent, and rows streamed by DMA from the half of a double buffer they were drawn into (Pico W too),
+  the RP2040's renderer in Thumb-1 assembly (`src/video_t1.pmi`, checked like the Thumb-2 one: 0
+  differences), border rows no longer re-sent when only the palette changes, and the demo rolling its
+  palette inside the vertical blank as a CoCo 3 program does (it took two frames before):
+
+  | the demo, 1.79 MHz | pictures/s | core 1 busy | |
+  |---|---:|---:|---|
+  | **Pico W + panel** (RP2040, SPI 100 MHz) | **52-56** | 88-93% | was 13.7 |
+  | **Pico 2 W + panel** (SPI 75 MHz) | **43-48** | 99% | the wire: ~8,350 rows a second, 85% of it |
+  | Feather RP2350 (no panel) | 59.9 | 57% | |
+
+  The demo changes its colours 30 times a second and each change is 256 rows (246 KB): every change reaches
+  both panels; the pictures not drawn are of frames identical to one that was. BASIC is 59.9 on all three.
 - Disk: on a blank disk in flash a typed program is SAVEd, wiped, LOADed and RUN (`tests/disk.txt`); after
   a reflash and cold boot `DIR` still lists it and it LOADs and RUNs (`tests/disk_persist.txt`).
 

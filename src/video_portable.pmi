@@ -6,16 +6,14 @@
 ; they shared the RP2040's XIP cache with core 0's code, and the render ran at 12 passes a second while
 ; core 0 waited out its frames, against 16.6 from SRAM (and core 0's emulation 10% faster), measured.
 
-; VideoSamples (640 palette indices) to VideoOut (480 RGB565 pixels: samples 0, 1 and 2 of every four)
-; through VideoPal; returns the line's hash, a rotate-left-and-add of its pixels.
+; VideoSamples (640 palette indices) to VideoOut's half at VxOutOff (480 RGB565 pixels: samples 0, 1, 2 of every four)
+; through VideoPal. (Returns 0: it returned a hash of the pixels, which VideoFrame no longer uses.)
 ProcedureRAM.l VideoScaleOut()
-  Protected x.i, sum.l
-  sum = 0
+  Protected x.i
   For x = 0 To 479
-    VideoOut(x) = VideoPal(VideoSamples(VideoMap(x)))
-    sum = ((sum << 1) | ((sum >> 31) & 1)) + VideoOut(x)
+    VideoOut(VxOutOff + x) = VideoPal(VideoSamples(VideoMap(x)))
   Next
-  ProcedureReturn sum
+  ProcedureReturn 0
 EndProcedure
 
 ; Eight dots of VxGlyph (bit 7 first) at VideoSamples(VxX): VxFg where a bit is set, VxBg where it is

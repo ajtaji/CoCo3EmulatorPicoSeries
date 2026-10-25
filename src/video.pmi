@@ -25,11 +25,11 @@ Global Dim VideoColor.u(64)              ; GIME colour (6 bits) -> RGB565
 Global Dim VideoColorRgb.l(64)           ; GIME colour (6 bits) -> 0xRRGGBB
 Global Dim VideoPal.l(17)                ; palette registers resolved (RGB565 in a word: one ldr in video_t2), 16 = border
 Global Dim VideoSamples.a(640)           ; one line, as palette indices
-Global Dim VideoOut.u(480)               ; one output row
+Global Dim VideoOut.u(960)               ; two output rows: a line is drawn into one half (VxOutOff 0 or 480)
+Global VxOutOff.i                        ; while the panel's DMA may still be reading the other
 Global Dim VideoMap.u(480)               ; output x -> sample
 Global Dim VideoRowFirst.u(240)          ; source line -> first output row
 Global Dim VideoRowCount.a(240)          ; ... and how many rows show it (1 or 2)
-Global Dim VideoHash.l(240)
 Global Dim CocoFont.a(1024)              ; 128 characters x 8 rows, bit 7 = leftmost
 Global VideoFontLoaded.i
 Global VideoForce.i, VideoFrames.i, VideoRowsSent.i, VideoLastPal.i = -1
@@ -93,6 +93,12 @@ Procedure VideoInit()
     VideoRowFirst(i) = (i * 4 + 2) / 3
     VideoRowCount(i) = ((i + 1) * 4 + 2) / 3 - VideoRowFirst(i)
   Next
+  ; the assembly kernels store words into VideoSamples and halfwords into VideoOut, and an M0+ faults on
+  ; an unaligned one: say so rather than reset
+  If (@VideoSamples(0) & 3) Or (@VideoOut(0) & 1) Or (@VideoLut(0) & 3) Or (@VideoPal(0) & 3)
+    Say("VIDEO ERROR: a pixel array is not aligned (samples ") : Num(@VideoSamples(0)) : Say(", out ") : Num(@VideoOut(0))
+    Say(") - the kernels would fault on an M0+") : Eol()
+  EndIf
   VideoForce = 1
 EndProcedure
 
@@ -387,7 +393,9 @@ Procedure.l VideoLineKey(line.i)
   Protected n.i, i.i, a.i, cnt.i, left.i, border.i
   If VdLegacy : border = VideoLegacyBorder() : Else : border = Gime($A) & $3F : EndIf
   VideoLinePlace(line)
-  VideoKeyBuf(0) = GimePalSerial : VideoKeyBuf(1) = border : VideoKeyBuf(2) = VlIn
+  ; (a border line is drawn from the border colour alone, never the palette: it does not change when the
+  ; palette does - the demo's rolling palette re-sent 64 rows of unchanged black border every roll)
+  VideoKeyBuf(0) = GimePalSerial * VlIn : VideoKeyBuf(1) = border : VideoKeyBuf(2) = VlIn
   VideoKeyBuf(3) = VlAddr : VideoKeyBuf(4) = VlOffset | (VlRow << 16)
   VideoKeyBuf(5) = VdLegacy | (VdText << 1) | (VdAttr << 2) | (VdBpp << 4) | (VdLeft << 8) | (VdScale << 16)
   VideoKeyBuf(6) = VdBytes | (VdFF22 << 8) | ((Gime(8) & 7) << 16)
@@ -418,12 +426,14 @@ Procedure.l VideoRenderLine(line.i)
   ProcedureReturn VideoScaleOut()
 EndProcedure
 
-; One picture: draw the lines whose key changed (all of them every #VIDEO_RECHECK pictures, or when
-; VideoForce asks), send the ones whose pixels changed.
+; One picture: draw the lines whose key changed, #VIDEO_LINES / #VIDEO_RECHECK more whatever their key says
+; (every line once a second), all of them when VideoForce asks - and send every line drawn. (A line was
+; sent only when a rotate-and-add hash of its pixels changed, and that hash is the same, $FFFFFFF8, for
+; every one-colour line whatever its colour: the demo's colour bands stood still on the panels while the
+; letters' rows moved (Ron saw it, 2026-10-25). No pixel hash is trusted now: a line's inputs decide.)
 Procedure VideoFrame()
-  Protected line.i, h.l, k.i, force.i, all.i, key.l
-  force = VideoForce : VideoForce = 0
-  all = force
+  Protected line.i, k.i, all.i, key.l
+  all = VideoForce : VideoForce = 0
   VideoKeyFrames = VideoKeyFrames + 1
   If VideoKeyFrames >= #VIDEO_RECHECK : VideoKeyFrames = 0 : EndIf
   VideoDecode()
@@ -431,15 +441,13 @@ Procedure VideoFrame()
     key = VideoLineKey(line)
     If all Or key <> VideoKey(line) Or (line % #VIDEO_RECHECK) = VideoKeyFrames
       VideoKey(line) = key
-      h = VideoRenderLine(line)
+      VxOutOff = 480 - VxOutOff
+      VideoRenderLine(line)
       VideoLinesDrawn = VideoLinesDrawn + 1
-      If force Or h <> VideoHash(line)
-        VideoHash(line) = h
-        For k = 0 To VideoRowCount(line) - 1
-          VideoSendRow(VideoRowFirst(line) + k, @VideoOut(0))
-          VideoRowsSent = VideoRowsSent + 1
-        Next
-      EndIf
+      For k = 0 To VideoRowCount(line) - 1
+        VideoSendRow(VideoRowFirst(line) + k, @VideoOut(VxOutOff))
+        VideoRowsSent = VideoRowsSent + 1
+      Next
     EndIf
     CocoAudioPoll()
   Next

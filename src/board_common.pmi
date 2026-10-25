@@ -54,6 +54,53 @@ EndProcedure
 
 ; ---------------------------------------------------------------- the panel
 
+CompilerIf #COCO_PANEL_ASYNC = 1
+; ROWS GO OUT BY DMA WHILE THE NEXT LINE IS DRAWN, AND A RUN OF ROWS IS ONE STREAM. Tft796BlitRect waits for
+; each row's 960 bytes and sets its own window (11 bytes, each polled) - on the demo, whose rolling palette
+; changes ~256 rows every second frame, most of a picture went on the wire with core 1 idle. Here a row's
+; DMA is started from the half of VideoOut it was drawn into and left running while the next line is drawn
+; into the other half (video.pmi's VxOutOff); a row that follows the one before it is just the next DMA
+; into the same RAMWR stream (window open to the bottom, CS held low); a gap, or the picture's end
+; (VideoSendDone), closes the stream. The library's own registers and steps (spi.pico / spi.pico2's
+; SpiDmaSend16, without its wait). From SRAM: on the RP2040 flash code shares the XIP cache with core 0.
+Global CocoRowPending.i, CocoRowStream.i, CocoRowNextY.i, CocoRowLost.i
+ProcedureRAM CocoRowWait()
+  If CocoRowPending
+    If SpiDmaWaitFor(0, #VIDEO_OUT_W) = 0 : SpiDmaAbort(0) : CocoRowLost = CocoRowLost + 1 : CocoRowStream = 0 : EndIf
+    CocoRowPending = 0
+  EndIf
+EndProcedure
+ProcedureRAM CocoRowFinish()
+  CocoRowWait()
+  If CocoRowStream
+    SpiDmaRestore(0)
+    Tft796PinSet(tft796_cs, 1)
+    CocoRowStream = 0
+  EndIf
+EndProcedure
+ProcedureRAM CocoRowSend(y.i, pixels.i)
+  Protected base.i
+  CocoRowWait()
+  base = __SpiBase(0)
+  If CocoRowStream = 0 Or y <> CocoRowNextY
+    CocoRowFinish()
+    If SpiDmaInit() = 0 : ProcedureReturn : EndIf
+    Tft796Window(0, y, #VIDEO_OUT_W - 1, #VIDEO_OUT_H - 1)
+    Tft796PinSet(tft796_dc, 1)
+    Tft796PinSet(tft796_cs, 0)
+    SpiSetBits(0, 16)
+    PokeL(base + 36, PeekL(base + 36) | #SPI_SSPDMACR_TXDMAE)
+    CocoRowStream = 1
+  EndIf
+  PokeL(#SPI_DMA_CH0_READ, pixels)
+  PokeL(#SPI_DMA_CH0_WRITE, base + 8)
+  PokeL(#SPI_DMA_CH0_COUNT, #VIDEO_OUT_W)
+  PokeL(#SPI_DMA_CH0_CTRL, #SPI_DMA_EN | #SPI_DMA_SIZE_HALF | #SPI_DMA_INCR_READ | (SpiDmaTreq(0) << #COCO_DMA_TREQ_SHIFT))
+  CocoRowPending = 1
+  CocoRowNextY = y + 1
+EndProcedure
+CompilerEndIf
+
 Procedure VideoSendRow(y.i, pixels.i)
   CompilerIf #COCO_HEADLESS = 0
     CompilerIf #COCO_PANEL_ASYNC = 1

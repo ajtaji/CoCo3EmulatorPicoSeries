@@ -13,7 +13,7 @@ Procedure CocoCapture()
   For line = 0 To #VIDEO_LINES - 1
     VideoRenderLine(line)
     For x = 0 To 479
-      UsbSerialWrite(VideoOut(x) & 255) : UsbSerialWrite(VideoOut(x) >> 8)
+      UsbSerialWrite(VideoOut(VxOutOff + x) & 255) : UsbSerialWrite(VideoOut(VxOutOff + x) >> 8)
     Next
     CocoBoardService()
   Next

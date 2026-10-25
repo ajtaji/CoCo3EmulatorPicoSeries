@@ -18,7 +18,7 @@ XIncludeFile "../../6809EmulatorPicoSeries/src/cpu6809.pico"
 XIncludeFile "../src/cpu6809_glue.pmi"
 XIncludeFile "../src/machine.pmi"
 XIncludeFile "../src/video.pmi"
-XIncludeFile "../src/video_portable.pmi"
+XIncludeFile "../src/video_t1.pmi"           ; the inner loops in Thumb-1 (video_t2.pmi on the RP2350)
 XIncludeFile "../src/keyboard.pmi"
 XIncludeFile "../src/sound.pmi"
 XIncludeFile "../src/disk.pmi"
