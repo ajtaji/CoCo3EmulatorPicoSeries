@@ -24,5 +24,12 @@ Check 'BASIC TIMER loop, 10 s at 0.89 MHz' @('--log', '2400', '--type-file', (Jo
 $dsk = Join-Path $root 'build\check.dsk'; Remove-Item $dsk -ErrorAction SilentlyContinue
 Check 'disk: SAVE to a new .DSK' @('--log', '2000', '--new-disk0', $dsk, '--type-file', (Join-Path $root 'tests\disk_save.bas')) 'PCDISK +BAS +0 +B +1'
 Check 'disk: LOAD and RUN in a new session' @('--log', '2000', '--disk0', $dsk, '--type-file', (Join-Path $root 'tests\disk_load.bas')) 'RUN +\r?\nSAVED ON THE PC'
+# the README's Controls section is the controls table (desktop/controls.pbi) as --controls-md writes it
+$md = Join-Path $root 'build\controls.md'
+Start-Process $exe -ArgumentList @('--controls-md', "`"$md`"") -Wait -NoNewWindow
+$want = ((Get-Content $md -Raw) -replace "`r", '').Trim()
+$readme = (Get-Content (Join-Path $root 'README.md') -Raw) -replace "`r", ''
+$have = if ($readme -match '(?s)<!-- controls table: CoCo3\.exe --controls-md -->\n(.*?)\n<!-- end controls table -->') { $Matches[1].Trim() } else { '' }
+if ($have -eq $want) { 'PASS  README Controls section = the controls table' } else { 'FAIL  README Controls section differs from CoCo3.exe --controls-md'; $failed++ }
 if ($failed) { "$failed check(s) failed"; exit 1 }
 'all desktop checks passed'

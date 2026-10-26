@@ -164,15 +164,59 @@ tools\desktop_check.ps1 -Rom <folder with coco3.rom and disk11.rom>
 ```
 
 The ROMs (see [ROMs](#roms)) default to a `roms` folder beside `CoCo3.exe`. The window shows the CoCo's
-screen, the 6809's and the GIME's registers, the MMU and palette, a disassembly, memory, the log and the
-drives. Typing goes to the CoCo (arrows, Esc = BREAK, Home = CLEAR, F1, F2); F5 run/pause, F10 one
-instruction, F11 one frame, F3 reset, F8 full speed, F9 mute. `--log N` runs N frames without a window and
-prints the screen as text; `--type` and `--type-file` type into the CoCo (`\n` is ENTER, `\q` a quote);
-`--shot file.png N` saves the window after N frames and closes it; `--wav file.wav` records the sound.
+screen, the 6809's and the GIME's registers, the MMU and palette, a disassembly, memory, the log, the
+controls and the drives. Typing goes to the CoCo; the keys are under [Controls](#controls). `--log N` runs
+N frames without a window and prints the screen as text; `--type` and `--type-file` type into the CoCo
+(`\n` is ENTER, `\q` a quote); `--shot file.png N` saves the window after N frames and closes it; `--tab 3`
+opens on the Controls tab; `--wav file.wav` records the sound.
 `--pointer-test file.txt` checks that the pointer and the controls agree at the display's scale: it drives
-the window with synthetic pointer positions (the real pointer is never moved), four points on each of 13
+the window with synthetic pointer positions (the real pointer is never moved), four points on each of 16
 controls from the top of the window to the bottom, writes the results to the file and exits with the number
-of failures.
+of failures. `--fullscreen-test file.txt [shot.png]` enters and leaves full screen by posted keys and checks
+the window, the picture, the frame rate and the keys (21 checks), and exits with the number of failures.
+
+### Full screen
+
+The **Full screen** button or F11: a borderless window over the monitor the window is on (no display-mode
+change) showing only the CoCo's picture, 4:3 as an NTSC set shows it, as large as fits and centred, black
+around it. Emulation, sound and the 60 Hz frame rate are unchanged. Esc or F11 leaves, and the window comes
+back where it was, at the size it was. The pointer hides after two idle seconds and shows when it moves.
+
+### Controls
+
+The window's **Controls** tab (or the Controls button) shows this table; both come from
+`desktop/controls.pbi`, the table the key handling reads, and `CoCo3.exe --controls-md file.md` writes it
+(`tools/desktop_check.ps1` checks this section against it). Esc is BREAK in the window; in full screen Esc
+leaves full screen, and End is BREAK in both. F11 is free of the CoCo's keys (its F1 and F2 are the PC's
+F1 and F2); one frame moved from F11 to F7.
+
+<!-- controls table: CoCo3.exe --controls-md -->
+| PC | CoCo 3 / window |
+|---|---|
+| letters, digits, punctuation, Space | the same CoCo key, with SHIFT where the character needs it |
+| Enter | ENTER |
+| Esc (in the window) | BREAK |
+| End | BREAK |
+| Home | CLEAR |
+| Up | up arrow |
+| Down | down arrow |
+| Left | left arrow |
+| Backspace | left arrow |
+| Right | right arrow |
+| F1 | F1 |
+| F2 | F2 |
+| Alt + a letter or digit | ALT + that key |
+| Ctrl + a letter or digit | CTRL + that key |
+| (none) | joysticks and gamepad: not on the desktop yet - both sticks centred, fire buttons up |
+| F5 | window: run / pause |
+| F10 | window: one instruction (paused) |
+| F7 | window: one frame (paused) |
+| F3 | window: reset |
+| F8 | window: full speed on / off |
+| F9 | window: mute on / off |
+| F11 | window: full screen on / off |
+| Esc (in full screen) | window: leave full screen |
+<!-- end controls table -->
 
 ## The PureMetal demo
 

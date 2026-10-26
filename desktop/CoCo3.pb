@@ -16,8 +16,8 @@
 ;   CoCo3.exe ... --shot file.png N [--type "text"]  the window for N frames, then its picture, then exit.
 ;   CoCo3.exe ... --wav file.wav [--mute]  also writes what the sound device was given (48 kHz mono) and
 ;       file.wav.txt (underruns, skips, the reader's step, both threads' stalls); --mute plays silence.
-; KEYS: typing goes to the CoCo keyboard (arrows, Esc = BREAK, Home = CLEAR, F1, F2); F5 run/pause,
-;   F10 one instruction, F11 one frame, F3 reset, F8 full speed, F9 mute.
+; KEYS: the controls table, desktop/controls.pbi (the Controls tab shows it; --controls-md writes it as Markdown).
+;   CoCo3.exe ... --fullscreen-test log [shot.png]  full screen checked by posted keys; exits with the failures.
 ; The ROMs are Tandy's: none are in the repository.
 
 EnableExplicit
@@ -78,6 +78,7 @@ XIncludeFile "../src/sound.pmi"
 XIncludeFile "../src/disk.pmi"
 XIncludeFile "../src/coco3.pmi"
 XIncludeFile "host.pbi"
+XIncludeFile "controls.pbi"
 
 #SCR_W = 640
 #SCR_H = 480                             ; shown 640 x 480 (4:3): 240 lines, each drawn twice by the GPU
@@ -376,6 +377,110 @@ Procedure DrawLog(x.f, y.f, w.f, h.f)
   Next
 EndProcedure
 
+; The Controls tab: the controls table (controls.pbi), the PC key beside what it is on the CoCo 3 or in the
+; window; the wheel scrolls it when the pane is shorter than the table.
+Global CtlTop.i
+Procedure DrawControlsTab(x.f, y.f, w.f, h.f)
+  Protected lh.f = GLFontLineHeight(*Neon_FontSmall) + Neon_S(4), ty.f, rows.i, n.i, i.i, r.f, g.f, b.f
+  rows = (h - Neon_S(12)) / lh : n = ListSize(Controls())
+  If Neon_Hit(x, y, w, h) And Neon_Wheel : CtlTop - Neon_Wheel : EndIf
+  If CtlTop > n - rows : CtlTop = n - rows : EndIf
+  If CtlTop < 0 : CtlTop = 0 : EndIf
+  ty = y + Neon_S(6)
+  ForEach Controls()
+    If i >= CtlTop And i < CtlTop + rows
+      r = Neon_C_TextR : g = Neon_C_TextG : b = Neon_C_TextB
+      If Controls()\kind = #CTL_ACTION : r = Neon_C_AmbR : g = Neon_C_AmbG : b = Neon_C_AmbB : EndIf
+      If Controls()\kind = #CTL_NOTE : r = Neon_C_DimR : g = Neon_C_DimG : b = Neon_C_DimB : EndIf
+      Neon_Text(*Neon_FontSmall, x + Neon_S(14), ty, Controls()\pc$, r, g, b)
+      Neon_Text(*Neon_FontSmall, x + Neon_S(200), ty, Controls()\coco$, r, g, b)
+      ty + lh
+    EndIf
+    i + 1
+  Next
+EndProcedure
+
+; ---------------------------------------------------------------- full screen
+; The Full screen button or F11: a borderless window over the monitor the window is on (no display-mode
+; change) showing only the CoCo's picture - 640 x 240 samples shown 4:3, as the NTSC set shows them - as
+; large as fits and centred, black around it. Emulation, sound and the 60 Hz frame rate are the window's.
+; Esc leaves (it is BREAK only in the window; End is BREAK in both), and the window comes back exactly as
+; it was. The pointer hides after two idle seconds.
+Global FullScreen.i, FsStyle.i, FsPlacement.WINDOWPLACEMENT, FsCursorHidden.i, FsMouseX.i, FsMouseY.i, FsMouseMs.q
+Global FsViewX.f, FsViewY.f, FsViewW.f, FsViewH.f
+
+Procedure FsShowCursor(show.i)
+  If show And FsCursorHidden : ShowCursor_(#True) : FsCursorHidden = 0 : EndIf
+  If show = 0 And FsCursorHidden = 0 : ShowCursor_(#False) : FsCursorHidden = 1 : EndIf
+EndProcedure
+
+Procedure EnterFullScreen()
+  Protected hwnd.i = WindowID(Win), mi.MONITORINFO
+  If FullScreen : ProcedureReturn : EndIf
+  FsPlacement\length = SizeOf(WINDOWPLACEMENT) : GetWindowPlacement_(hwnd, @FsPlacement)
+  FsStyle = GetWindowLongPtr_(hwnd, #GWL_STYLE)
+  mi\cbSize = SizeOf(MONITORINFO) : GetMonitorInfo_(MonitorFromWindow_(hwnd, 2), @mi)   ; 2: the nearest monitor
+  SetWindowLongPtr_(hwnd, #GWL_STYLE, FsStyle & ~(#WS_CAPTION | #WS_THICKFRAME | #WS_MINIMIZEBOX | #WS_MAXIMIZEBOX | #WS_SYSMENU))
+  SetWindowPos_(hwnd, #HWND_TOP, mi\rcMonitor\left, mi\rcMonitor\top, mi\rcMonitor\right - mi\rcMonitor\left, mi\rcMonitor\bottom - mi\rcMonitor\top, #SWP_FRAMECHANGED | #SWP_NOOWNERZORDER | #SWP_SHOWWINDOW)
+  FullScreen = 1 : FsMouseMs = ElapsedMilliseconds()
+  MeasureWindow()
+EndProcedure
+
+Procedure LeaveFullScreen()
+  Protected hwnd.i = WindowID(Win)
+  If FullScreen = 0 : ProcedureReturn : EndIf
+  SetWindowLongPtr_(hwnd, #GWL_STYLE, FsStyle)
+  SetWindowPlacement_(hwnd, @FsPlacement)
+  SetWindowPos_(hwnd, 0, 0, 0, 0, 0, #SWP_FRAMECHANGED | #SWP_NOMOVE | #SWP_NOSIZE | #SWP_NOZORDER | #SWP_NOOWNERZORDER)
+  FullScreen = 0 : FsShowCursor(1)
+  MeasureWindow()
+EndProcedure
+
+Procedure DrawFullScreen()
+  Protected a.f = #SCR_W / #SCR_H, vw.f, vh.f, mx.i, my.i
+  vw = PhysW : vh = vw / a
+  If vh > PhysH : vh = PhysH : vw = vh * a : EndIf
+  vw = Round(vw, #PB_Round_Nearest) : vh = Round(vh, #PB_Round_Nearest)
+  FsViewW = vw : FsViewH = vh : FsViewX = Round((PhysW - vw) / 2, #PB_Round_Down) : FsViewY = Round((PhysH - vh) / 2, #PB_Round_Down)
+  ScreenTextureUpload()
+  DrawGLSprite(@ScreenSprite, FsViewX, FsViewY, 0.0, vw / #SCR_W, 1.0, 1.0, 1.0, 1.0, #True, -1, -1, -1, -1, #True)
+  ; the pointer hides after two seconds without moving, and shows again when it moves
+  mx = WindowMouseX(Win) : my = WindowMouseY(Win)
+  If mx <> FsMouseX Or my <> FsMouseY : FsMouseX = mx : FsMouseY = my : FsMouseMs = ElapsedMilliseconds() : FsShowCursor(1) : EndIf
+  If ElapsedMilliseconds() - FsMouseMs > 2000 : FsShowCursor(0) : EndIf
+EndProcedure
+
+; The window's own keys and buttons.
+Procedure WindowAction(act.i)
+  Select act
+    Case #ACT_RUNPAUSE : EmuRunning ! 1
+    Case #ACT_STEP : If EmuRunning = 0 : EmuStep() : EndIf
+    Case #ACT_FRAME : If EmuRunning = 0 : EmuFrame() : EndIf
+    Case #ACT_RESET : CocoReset() : CocoCpuReset()
+    Case #ACT_FULLSPEED : EmuFull ! 1
+    Case #ACT_MUTE : HostSndMuted ! 1
+    Case #ACT_FULLSCREEN : If FullScreen : LeaveFullScreen() : Else : EnterFullScreen() : EndIf
+    Case #ACT_LEAVEFULL : LeaveFullScreen()
+  EndSelect
+EndProcedure
+
+; A key the gadget reported as a key code (characters come as #PB_EventType_Input): the controls table's
+; CoCo key or window key, or ALT / CTRL held with a letter or digit (both held is AltGr: a character).
+Global HostKeyLog$   ; the bytes this put in the queue, for --fullscreen-test
+Procedure HostKeyDown(k.i)
+  Protected *c.Control = ControlFind(k, FullScreen), held.i, mod.i
+  If *c
+    If *c\kind = #CTL_ACTION : WindowAction(*c\value) : Else : KeyPut(*c\value) : HostKeyLog$ + Str(*c\value) + " " : EndIf
+    ProcedureReturn
+  EndIf
+  If (k >= #PB_Shortcut_A And k <= #PB_Shortcut_Z) Or (k >= #PB_Shortcut_0 And k <= #PB_Shortcut_9)
+    ForEach Controls()
+      If Controls()\kind = #CTL_MOD And GetKeyState_(Controls()\pcKey) & $8000 : held + 1 : mod = Controls()\value : EndIf
+    Next
+    If held = 1 : KeyPut(mod) : KeyPut(k) : HostKeyLog$ + Str(mod) + " " + Str(k) + " " : EndIf
+  EndIf
+EndProcedure
+
 Procedure DrawControls(x.f, y.f, w.f, h.f)
   Protected bx.f = x + Neon_S(12), by.f = y + Neon_S(36), bh.f = Neon_S(28), d.i, p$, r$
   Neon_Panel(x, y, w, h, "Tandy Color Computer 3 - 512 KB, Disk BASIC", Neon_C_VioR, Neon_C_VioG, Neon_C_VioB, Neon_S(26))
@@ -395,6 +500,9 @@ Procedure DrawControls(x.f, y.f, w.f, h.f)
     Neon_Text(*Neon_FontSmall, bx + Neon_S(116), by + Neon_S(7), GetFilePart(HostDiskPath$(d)), Neon_C_DimR, Neon_C_DimG, Neon_C_DimB)
     bx + w / 2 - Neon_S(6)
   Next
+  by + bh + Neon_S(8) : bx = x + Neon_S(12)
+  If Btn("Full screen", bx, by, Neon_S(124), bh, "Full screen  F11") : WindowAction(#ACT_FULLSCREEN) : EndIf : bx + Neon_S(130)
+  If Btn("Controls", bx, by, Neon_S(88), bh, "Controls", Bool(RightTab = 3)) : RightTab = 3 : EndIf
   by + bh + Neon_S(10)
   Neon_Text(*Neon_FontUI, x + Neon_S(12), by, StatusLine(), Neon_C_AmbR, Neon_C_AmbG, Neon_C_AmbB)
   If EmuStop$ <> "" : Neon_Text(*Neon_FontUI, x + Neon_S(12), by + Neon_S(20), EmuStop$, Neon_C_RedR, Neon_C_RedG, Neon_C_RedB) : EndIf
@@ -411,7 +519,7 @@ Global PtLog$, PtFile$, PtX.f, PtY.f, PtDown.i, PtWheel.i, PtCase.i, PtPoint.i, 
 Global PtCount.i, Dim PtName$(20)
 
 Procedure PtInit()
-  Protected n$ = "Run|Pause|Step|Frame|Reset|Full speed|Mute|Drive 0|Drive 1|tab 0|tab 1|tab 2|memory pane", i.i
+  Protected n$ = "Run|Pause|Step|Frame|Reset|Full speed|Mute|Drive 0|Drive 1|Full screen|Controls|tab 0|tab 1|tab 2|tab 3|memory pane", i.i
   PtCount = CountString(n$, "|") + 1
   For i = 0 To PtCount - 1 : PtName$(i) = StringField(n$, i + 1, "|") : Next
 EndProcedure
@@ -511,6 +619,12 @@ Procedure DrawWindow()
   glDisable_(#GL_SCISSOR_TEST)
   glViewport_(0, 0, PhysW, PhysH)
   glClearColor_(0.03, 0.04, 0.06, 1.0) : glClear_(#GL_COLOR_BUFFER_BIT)
+  If FullScreen                            ; only the CoCo's picture, black around it
+    glClearColor_(0, 0, 0, 1.0) : glClear_(#GL_COLOR_BUFFER_BIT)
+    DrawFullScreen()
+    Neon_ChromeEndFrame()
+    ProcedureReturn
+  EndIf
   ; the CoCo's screen: as large as fits the left 58 %, 4:3
   sc = (PhysW * 0.58 - 2 * margin) / #SCR_W
   If (PhysH - 2 * margin) / #SCR_H < sc : sc = (PhysH - 2 * margin) / #SCR_H : EndIf
@@ -522,17 +636,18 @@ Procedure DrawWindow()
   DrawGLSprite(@ScreenSprite, px, py, 0.0, sc, 1.0, 1.0, 1.0, 1.0, #True, -1, -1, -1, -1, #True)
   PartUs(0) + MicroNow() - t : t = MicroNow()
   rx = px + sw + margin : rw = PhysW - rx - margin
-  DrawControls(rx, margin, rw, Neon_S(170))
+  DrawControls(rx, margin, rw, Neon_S(206))
   PartUs(1) + MicroNow() - t : t = MicroNow()
-  y = margin + Neon_S(170) + margin
-  DrawRegisters(rx, y, rw, Neon_S(250))
+  y = margin + Neon_S(206) + margin
+  DrawRegisters(rx, y, rw, Neon_S(200))
   PartUs(2) + MicroNow() - t : t = MicroNow()
-  y + Neon_S(250) + margin
+  y + Neon_S(200) + margin
   Neon_Panel(rx, y, rw, PhysH - y - margin, "", Neon_C_AccR, Neon_C_AccG, Neon_C_AccB)
-  RightTab = Neon_TabStrip(300, rx + 1, y + 1, rw - 2, Neon_S(28), "Disassembly|Memory|Log", RightTab)
+  RightTab = Neon_TabStrip(300, rx + 1, y + 1, rw - 2, Neon_S(28), "Disassembly|Memory|Log|Controls", RightTab)
   Select RightTab
     Case 0 : DrawDisassembly(rx, y + Neon_S(32), rw, PhysH - y - margin - Neon_S(32))
     Case 1 : DrawMemory(rx, y + Neon_S(32), rw, PhysH - y - margin - Neon_S(32))
+    Case 3 : DrawControlsTab(rx, y + Neon_S(32), rw, PhysH - y - margin - Neon_S(32))
     Default : DrawLog(rx, y + Neon_S(32), rw, PhysH - y - margin - Neon_S(32))
   EndSelect
   PartUs(3) + MicroNow() - t : t = MicroNow()
@@ -557,20 +672,104 @@ Procedure SaveWindowShot(path$)
   FreeMemory(*px)
 EndProcedure
 
-; A key the PC sends as a key code, not a character: the CoCo's special keys.
-Procedure HostSpecialKey(k.i)
-  Select k
-    Case #PB_Shortcut_Up : KeyPut($80)
-    Case #PB_Shortcut_Down : KeyPut($81)
-    Case #PB_Shortcut_Left : KeyPut($82)
-    Case #PB_Shortcut_Right : KeyPut($83)
-    Case #PB_Shortcut_F1 : KeyPut($84)
-    Case #PB_Shortcut_F2 : KeyPut($85)
-    Case #PB_Shortcut_Escape : KeyPut(27)
-    Case #PB_Shortcut_Home : KeyPut(12)
-    Case #PB_Shortcut_Return : KeyPut(13)
-    Case #PB_Shortcut_Back : KeyPut(8)
+; ---------------------------------------------------------------- --fullscreen-test
+; Full screen by its own keys, no real pointer or keyboard: the keys are posted to the window's GL gadget
+; (as the keyboard would send them), ALT and CTRL held through this thread's own keyboard state
+; (SetKeyboardState, which no other program reads), and what reached the CoCo read from HostKeyLog$.
+; Checked: Esc in the window is BREAK and leaves the window alone; F11 covers the window's monitor, the
+; picture is 4:3, as large as fits and centred, the machine runs on at 60 frames a second, End is BREAK
+; there, the scale is measured again; Esc leaves without reaching the CoCo, and the window's rectangle and
+; style come back exactly; Ctrl and Alt with a letter are the CoCo's CTRL and ALT.
+Global FtOn.i, FtFile$, FtShot$, FtStep.i, FtWait.i, FtFails.i, FtLog$, FtRect.RECT, FtStyle.i, FtFrame.i, FtMs.q
+Global Dim FtKeys.a(255)
+
+Procedure FtCheck(ok.i, what$)
+  If ok = 0 : FtFails + 1 : FtLog$ + "FAIL " : Else : FtLog$ + "ok   " : EndIf
+  FtLog$ + what$ + #LF$
+EndProcedure
+Procedure FtKey(vk.i, sys.i = 0)
+  If sys
+    PostMessage_(GadgetID(Gl), #WM_SYSKEYDOWN, vk, $20000000) : PostMessage_(GadgetID(Gl), #WM_SYSKEYUP, vk, $E0000000)
+  Else
+    PostMessage_(GadgetID(Gl), #WM_KEYDOWN, vk, 0) : PostMessage_(GadgetID(Gl), #WM_KEYUP, vk, $C0000000)
+  EndIf
+EndProcedure
+Procedure FtHold(vk.i)   ; 0: nothing held
+  Protected i.i
+  For i = 0 To 255 : FtKeys(i) = 0 : Next
+  If vk : FtKeys(vk) = $80 : EndIf
+  SetKeyboardState_(@FtKeys(0))
+EndProcedure
+Procedure FtSent(want$, what$)
+  FtCheck(Bool(HostKeyLog$ = want$), what$ + " (sent to the CoCo: '" + Trim(HostKeyLog$) + "')")
+  HostKeyLog$ = ""
+EndProcedure
+
+; One step, after each frame is drawn. Returns 1 when done.
+Procedure.i FtStep()
+  Protected r.RECT, mi.MONITORINFO, hwnd.i = WindowID(Win), rate.f, f.i
+  FtWait + 1
+  If FtWait < 20 : ProcedureReturn 0 : EndIf   ; frames for each step to settle
+  If FtStep = 3 And ElapsedMilliseconds() - FtMs < 1000 : ProcedureReturn 0 : EndIf   ; a second of full screen
+  FtWait = 0 : FtStep + 1
+  Select FtStep
+    Case 1
+      GetWindowRect_(hwnd, @FtRect) : FtStyle = GetWindowLongPtr_(hwnd, #GWL_STYLE) : HostKeyLog$ = ""
+      FtKey(#VK_ESCAPE)
+    Case 2
+      FtCheck(Bool(FullScreen = 0), "Esc in the window leaves the window as it is")
+      FtSent("27 ", "Esc in the window is BREAK")
+      FtKey(#VK_F11)
+    Case 3
+      FtFrame = CocoFrames : FtMs = ElapsedMilliseconds()
+    Case 4
+      GetWindowRect_(hwnd, @r) : mi\cbSize = SizeOf(MONITORINFO) : GetMonitorInfo_(MonitorFromWindow_(hwnd, 2), @mi)
+      FtCheck(FullScreen, "F11 entered full screen")
+      FtCheck(Bool(r\left = mi\rcMonitor\left And r\top = mi\rcMonitor\top And r\right = mi\rcMonitor\right And r\bottom = mi\rcMonitor\bottom),
+              "the window covers its monitor (" + Str(r\left) + "," + Str(r\top) + " - " + Str(r\right) + "," + Str(r\bottom) + "; monitor " +
+              Str(mi\rcMonitor\left) + "," + Str(mi\rcMonitor\top) + " - " + Str(mi\rcMonitor\right) + "," + Str(mi\rcMonitor\bottom) + ")")
+      FtCheck(Bool(PhysW = mi\rcMonitor\right - mi\rcMonitor\left And PhysH = mi\rcMonitor\bottom - mi\rcMonitor\top), "the canvas is the monitor: " + Str(PhysW) + "x" + Str(PhysH))
+      FtCheck(Bool(Abs(FsViewW / FsViewH - 4.0 / 3.0) < 0.005), "the picture " + StrF(FsViewW, 0) + "x" + StrF(FsViewH, 0) + " is 4:3 (" + StrF(FsViewW / FsViewH, 4) + ")")
+      FtCheck(Bool(FsViewW <= PhysW And FsViewH <= PhysH And (Abs(FsViewW - PhysW) <= 1 Or Abs(FsViewH - PhysH) <= 1)), "as large as fits in " + Str(PhysW) + "x" + Str(PhysH))
+      FtCheck(Bool(Abs(FsViewX * 2 + FsViewW - PhysW) <= 1 And Abs(FsViewY * 2 + FsViewH - PhysH) <= 1), "centred at " + StrF(FsViewX, 0) + "," + StrF(FsViewY, 0))
+      FtCheck(Bool(Abs(Neon_UIScale - PhysW / Util_WinWidth) < 0.01), "the scale measured again: " + StrF(Neon_UIScale, 3))
+      rate = (CocoFrames - FtFrame) * 1000.0 / (ElapsedMilliseconds() - FtMs)
+      FtCheck(Bool(Abs(rate - 59.92) < 3), "the machine runs on at its own rate in full screen (" + StrF(rate, 1) + " frames a second, 59.92 wanted)")
+      If FtShot$ : SaveWindowShot(FtShot$) : EndIf
+      FtKey(#VK_END)
+    Case 5
+      FtSent("27 ", "End is BREAK in full screen")
+      FtCheck(FullScreen, "End leaves full screen alone")
+      FtKey(#VK_ESCAPE)
+    Case 6
+      GetWindowRect_(hwnd, @r)
+      FtCheck(Bool(FullScreen = 0), "Esc left full screen")
+      FtSent("", "Esc in full screen is not BREAK")
+      FtCheck(Bool(r\left = FtRect\left And r\top = FtRect\top And r\right = FtRect\right And r\bottom = FtRect\bottom),
+              "the window's rectangle is back (" + Str(r\left) + "," + Str(r\top) + " - " + Str(r\right) + "," + Str(r\bottom) + ")")
+      FtCheck(Bool(GetWindowLongPtr_(hwnd, #GWL_STYLE) = FtStyle), "the window's style is back")
+      FtCheck(Bool(Abs(Neon_UIScale - PhysW / Util_WinWidth) < 0.01 And PhysW = Round(Util_WinWidth * Neon_UIScale, #PB_Round_Nearest)), "the scale measured again: " + StrF(Neon_UIScale, 3) + ", canvas " + Str(PhysW) + "x" + Str(PhysH))
+      FtHold(#VK_CONTROL) : FtKey(#VK_A)
+    Case 7
+      FtHold(0)
+      FtSent("135 65 ", "Ctrl+A is CTRL+A")
+      FtHold(#VK_MENU) : FtKey(#VK_A, 1)
+    Case 8
+      FtHold(0)
+      FtSent("134 65 ", "Alt+A is ALT+A")
+      FtKey(#VK_F11)
+    Case 9
+      FtCheck(FullScreen, "F11 again: full screen")
+      FtKey(#VK_F11)
+    Case 10
+      GetWindowRect_(hwnd, @r)
+      FtCheck(Bool(FullScreen = 0 And r\left = FtRect\left And r\top = FtRect\top And r\right = FtRect\right And r\bottom = FtRect\bottom), "F11 in full screen leaves it, the rectangle back")
+      FtLog$ + "fullscreen-test: " + Str(FtFails) + " failures" + #LF$
+      f = CreateFile(#PB_Any, FtFile$)
+      If f : WriteString(f, FtLog$) : CloseFile(f) : EndIf
+      ProcedureReturn 1
   EndSelect
+  ProcedureReturn 0
 EndProcedure
 
 Procedure WindowRun()
@@ -579,6 +778,8 @@ Procedure WindowRun()
                     #PB_Window_SystemMenu | #PB_Window_ScreenCentered | #PB_Window_MinimizeGadget | #PB_Window_MaximizeGadget | #PB_Window_SizeGadget)
   If Gl = 0 : MessageRequester("CoCo 3", "Could not open an OpenGL window.") : ProcedureReturn : EndIf
   Win = Util_MainWindowID
+  ; the engine binds Esc to a shortcut of its own; here Esc is BREAK in the window and leaves full screen
+  RemoveKeyboardShortcut(Win, #PB_Shortcut_Escape)
   MeasureWindow()   ; the scale, the fonts, the canvas
   GL_SetVSync(1)
   SetGadgetAttribute(Gl, #PB_OpenGL_SetContext, #True)
@@ -603,17 +804,7 @@ Procedure WindowRun()
               Case #PB_EventType_MouseWheel : Wheel + GetGadgetAttribute(Gl, #PB_OpenGL_WheelDelta)
               Case #PB_EventType_KeyDown
                 KeyCode = GetGadgetAttribute(Gl, #PB_OpenGL_Key)
-                If Neon_FocusID = 0
-                  Select KeyCode
-                    Case #PB_Shortcut_F5 : EmuRunning ! 1
-                    Case #PB_Shortcut_F11 : If EmuRunning = 0 : EmuFrame() : EndIf
-                    Case #PB_Shortcut_F10 : If EmuRunning = 0 : EmuStep() : EndIf
-                    Case #PB_Shortcut_F3 : CocoReset() : CocoCpuReset()
-                    Case #PB_Shortcut_F8 : EmuFull ! 1
-                    Case #PB_Shortcut_F9 : HostSndMuted ! 1
-                    Default : HostSpecialKey(KeyCode)
-                  EndSelect
-                EndIf
+                If Neon_FocusID = 0 : HostKeyDown(KeyCode) : EndIf   ; the controls table (controls.pbi)
               Case #PB_EventType_Input
                 KeyChar = GetGadgetAttribute(Gl, #PB_OpenGL_Input)
                 If Neon_FocusID = 0 And KeyChar >= 32 And KeyChar < 127 : KeyPut(KeyChar) : EndIf
@@ -654,9 +845,12 @@ Procedure WindowRun()
       PtStep()
       If PtDone : quit = 1 : EndIf
     EndIf
+    If FtOn And FtStep() : quit = 1 : EndIf
   Until quit
+  LeaveFullScreen()
   HostSoundClose()
   If PtOn : End PtFails : EndIf   ; --pointer-test: the number of failures
+  If FtOn : End FtFails : EndIf   ; --fullscreen-test: the number of failures
 EndProcedure
 
 ; ---------------------------------------------------------------- start
@@ -664,6 +858,7 @@ EndProcedure
 Define i.i, a$, rom$ = GetPathPart(ProgramFilename()) + "roms\coco3.rom", cart$ = GetPathPart(ProgramFilename()) + "roms\disk11.rom"
 Define logFrames.i = -1, err$, d.i
 Dim diskArg$(3) : Dim newDisk$(3)
+ControlsInit()
 For i = 0 To CountProgramParameters() - 1
   a$ = ProgramParameter(i)
   Select LCase(a$)
@@ -683,7 +878,14 @@ For i = 0 To CountProgramParameters() - 1
     Case "--timing" : ShowTiming = 1
     Case "--wav" : i + 1 : HostWav$ = ProgramParameter(i)
     Case "--mute" : HostSndMuted = 1
+    Case "--tab" : i + 1 : RightTab = Val(ProgramParameter(i))   ; the right-hand pane: 0 disassembly, 1 memory, 2 log, 3 controls
     Case "--pointer-test" : i + 1 : PtFile$ = ProgramParameter(i) : PtOn = 1 : HostSndMuted = 1 : PtInit()
+    Case "--fullscreen-test" : i + 1 : FtFile$ = ProgramParameter(i) : FtOn = 1 : HostSndMuted = 1
+      If i + 1 < CountProgramParameters() And Left(ProgramParameter(i + 1), 2) <> "--" : i + 1 : FtShot$ = ProgramParameter(i) : EndIf
+    Case "--controls-md"   ; the README's Controls table, from the controls table
+      i + 1
+      If CreateFile(0, ProgramParameter(i)) : WriteString(0, ControlsMarkdown()) : CloseFile(0) : End 0 : EndIf
+      End 1
     Case "--shot" : i + 1 : ShotPath$ = ProgramParameter(i) : i + 1 : ShotFrames = Val(ProgramParameter(i))
     Default
       For d = 0 To 3
