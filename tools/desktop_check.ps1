@@ -1,13 +1,15 @@
 # Build the desktop CoCo 3 and prove it in console runs: BASIC boots and runs a typed program, BASIC's own
 # 10-second loop count, and a .DSK file saved, then loaded and run by a second session. Exit 1 on a failure.
-#   tools\desktop_check.ps1 [-Rom <folder with coco3.rom and disk11.rom>]   (default: build\roms, as build_roms.ps1 leaves them)
-param([string]$Rom = (Join-Path (Split-Path $PSScriptRoot -Parent) 'build\roms'), [switch]$NoBuild)
+#   tools\desktop_check.ps1 [-Rom <folder with coco3.rom and disk11.rom>] [-EngineDir <engine folder>]
+#   (-Rom default: build\roms, as build_roms.ps1 leaves them; -EngineDir default: the engine cloned beside)
+param([string]$Rom = (Join-Path (Split-Path $PSScriptRoot -Parent) 'build\roms'), [string]$EngineDir = '', [switch]$NoBuild)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $exe = Join-Path $root 'build\CoCo3.exe'
 New-Item -ItemType Directory -Force (Join-Path $root 'build') | Out-Null
 if (!$NoBuild) {
-    & 'C:\Program Files\PureBasic\Compilers\pbcompilerc.exe' (Join-Path $root 'desktop\CoCo3.pb') /EXE $exe /THREAD /DPIAWARE | Select-Object -Last 3
+    $engine = @(); if ($EngineDir) { $engine = @('/CONSTANT', ('GL_ENGINE_DIR$=' + $EngineDir.TrimEnd('\', '/').Replace('\', '/') + '/')) }
+    & 'C:\Program Files\PureBasic\Compilers\pbcompilerc.exe' (Join-Path $root 'desktop\CoCo3.pb') /EXE $exe /THREAD /DPIAWARE @engine | Select-Object -Last 3
     if ($LASTEXITCODE -ne 0) { throw 'the desktop build failed' }
 }
 $roms = @('--rom', "$Rom\coco3.rom", '--cart', "$Rom\disk11.rom")

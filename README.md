@@ -169,6 +169,10 @@ drives. Typing goes to the CoCo (arrows, Esc = BREAK, Home = CLEAR, F1, F2); F5 
 instruction, F11 one frame, F3 reset, F8 full speed, F9 mute. `--log N` runs N frames without a window and
 prints the screen as text; `--type` and `--type-file` type into the CoCo (`\n` is ENTER, `\q` a quote);
 `--shot file.png N` saves the window after N frames and closes it; `--wav file.wav` records the sound.
+`--pointer-test file.txt` checks that the pointer and the controls agree at the display's scale: it drives
+the window with synthetic pointer positions (the real pointer is never moved), four points on each of 13
+controls from the top of the window to the bottom, writes the results to the file and exits with the number
+of failures.
 
 ## The PureMetal demo
 
