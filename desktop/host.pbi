@@ -105,13 +105,13 @@ Procedure.s HostLoadRoms(rom$, cart$)
   ProcedureReturn ""
 EndProcedure
 
-; ---------------------------------------------------------------- sound: waveOut, 48 kHz mono
+; ---------------------------------------------------------------- sound: the engine's sound card, 48 kHz
+; (GL_AudioOpen / GL_AudioNext / GL_AudioPlay / GL_AudioQueued: waveOut on Windows, ALSA on Linux). The
+; machine's samples are mono; the card takes stereo pairs, so each sample goes to both channels.
 
 #HOST_SND_BUFFERS = 8
 #HOST_SND_SAMPLES = 800                  ; one 60 Hz frame
-Global HostSndDevice.i, HostSndOpen.i, HostSndRead.i, HostSndMuted.i, HostSndUnderruns.i
-Global Dim HostSndHeader.WAVEHDR(#HOST_SND_BUFFERS - 1)
-Global Dim *HostSndBuf(#HOST_SND_BUFFERS - 1)
+Global HostSndOpen.i, HostSndRead.i, HostSndMuted.i, HostSndUnderruns.i, *HostSndMono
 Global CocoAudioLive.i
 Global HostSndSkips.i, HostSndOverruns.i, HostWav$, HostWavFile.i, HostWavBytes.i, HostSndEvents$
 
@@ -123,7 +123,7 @@ EndProcedure
 Procedure CocoAudioPoll()
 EndProcedure
 
-; --wav file: what the device was given, as a 48 kHz mono WAV, and file.txt: where the stream broke.
+; --wav file: what the card was given, as a 48 kHz mono WAV, and file.txt: where the stream broke.
 Procedure HostWavHeader(f.i, bytes.i)
   FileSeek(f, 0)
   WriteLong(f, $46464952) : WriteLong(f, 36 + bytes) : WriteLong(f, $45564157) : WriteLong(f, $20746D66)
@@ -132,17 +132,8 @@ Procedure HostWavHeader(f.i, bytes.i)
 EndProcedure
 
 Procedure.i HostSoundOpen()
-  Protected fmt.WAVEFORMATEX, i.i
-  fmt\wFormatTag = #WAVE_FORMAT_PCM : fmt\nChannels = 1 : fmt\nSamplesPerSec = 48000
-  fmt\wBitsPerSample = 16 : fmt\nBlockAlign = 2 : fmt\nAvgBytesPerSec = 96000
-  If waveOutOpen_(@HostSndDevice, #WAVE_MAPPER, @fmt, 0, 0, #CALLBACK_NULL) <> #MMSYSERR_NOERROR : ProcedureReturn 0 : EndIf
-  For i = 0 To #HOST_SND_BUFFERS - 1
-    *HostSndBuf(i) = AllocateMemory(#HOST_SND_SAMPLES * 2)
-    HostSndHeader(i)\lpData = *HostSndBuf(i)
-    HostSndHeader(i)\dwBufferLength = #HOST_SND_SAMPLES * 2
-    waveOutPrepareHeader_(HostSndDevice, @HostSndHeader(i), SizeOf(WAVEHDR))
-    HostSndHeader(i)\dwFlags | #WHDR_DONE
-  Next
+  If GL_AudioOpen(48000, #HOST_SND_SAMPLES, #HOST_SND_BUFFERS) = #False : ProcedureReturn 0 : EndIf
+  *HostSndMono = AllocateMemory(#HOST_SND_SAMPLES * 2)
   If HostWav$ <> ""
     HostWavFile = CreateFile(#PB_Any, HostWav$)
     If HostWavFile : HostWavHeader(HostWavFile, 0) : EndIf
@@ -151,15 +142,16 @@ Procedure.i HostSoundOpen()
   ProcedureReturn 1
 EndProcedure
 
-; The sound thread. The machine makes 48,000 samples a second by the PC's timer; the sound device plays
+; The sound thread. The machine makes 48,000 samples a second by the PC's timer; the sound card plays
 ; 48,000 by its own clock, and the two differ (measured: the machine ran 0.13% ahead of the Bluetooth
 ; speaker, so the backlog grew until the old reader jumped 449 samples forward every 7.25 s - a click).
-; So the reader follows the device: it reads the machine's samples at a step a fraction of a percent
-; above or below one, to keep about #HOST_SND_TARGET samples between the machine and the speaker. A step
-; of 1.003 moves a 36-sample half period by 0.1 sample: nothing to hear. waveOut calls block for
-; milliseconds at a time (24 ms a window pass, measured), so they are kept off the machine's thread, and
-; the machine's 2048-sample ring is copied into a FIFO of its own once a frame (HostSoundPump), which a
-; blocked thread cannot overrun.
+; So the reader follows the card: it reads the machine's samples at a step a fraction of a percent
+; above or below one, to keep about #HOST_SND_TARGET samples between the machine and the speaker (the
+; FIFO's backlog plus what the card still holds, GL_AudioQueued). A step of 1.003 moves a 36-sample half
+; period by 0.1 sample: nothing to hear. The card's calls can block for milliseconds at a time (24 ms a
+; window pass, measured on Windows), so they are kept off the machine's thread, and the machine's
+; 2048-sample ring is copied into a FIFO of its own once a frame (HostSoundPump), which a blocked thread
+; cannot overrun.
 #HOST_SND_FIFO = 65536                   ; samples, a power of two (1.4 s)
 #HOST_SND_TARGET = 4000                  ; samples queued or waiting (83 ms)
 #HOST_SND_LIMIT = 24000                  ; beyond this (the machine ran fast or was held) skip ahead
@@ -167,18 +159,11 @@ Global Dim HostSndFifo.w(#HOST_SND_FIFO)
 Global HostFifoW.i, HostFifoR.q          ; HostFifoR: 32.16 fixed point
 Global HostSndThread.i, HostSndQuit.i, HostSndLast.i, HostSndStep.i = 65536, HostSndHeld.i, HostSndWrites.i, HostSndLatency.i = #HOST_SND_TARGET * 16, HostPumpAt.q, HostPumpGaps$, HostThreadAt.q
 Procedure HostSoundThread(*unused)
-  Protected i.i, k.i, *b, pending.i, free.i, backlog.i, latency.i, pos.q, v.i
+  Protected k.i, *b, queued.i, backlog.i, latency.i, pos.q, v.i
   While HostSndQuit = 0
     If HostWav$ <> "" And HostThreadAt And ElapsedMilliseconds() - HostThreadAt > 30 : HostSndEvents$ + "sound thread gap " + Str(ElapsedMilliseconds() - HostThreadAt) + " ms at " + Str(HostWavBytes / 2) + #LF$ : EndIf
     HostThreadAt = ElapsedMilliseconds()
-    pending = 0 : free = -1
-    For i = 0 To #HOST_SND_BUFFERS - 1
-      If HostSndHeader(i)\dwFlags & #WHDR_DONE
-        If free < 0 : free = i : EndIf
-      Else
-        pending + 1
-      EndIf
-    Next
+    queued = GL_AudioQueued()            ; samples the card holds and has not played
     backlog = HostFifoW - (HostFifoR >> 16)
     If backlog > #HOST_SND_LIMIT
       HostSndSkips + 1 : HostSndEvents$ + "skip " + Str(backlog - #HOST_SND_TARGET) + " at " + Str(HostWavBytes / 2) + #LF$
@@ -186,15 +171,16 @@ Procedure HostSoundThread(*unused)
       backlog = #HOST_SND_TARGET
     EndIf
     ; a buffer goes out when the machine has made it, or - so the speaker never falls silent with a jump
-    ; to 0 - holding the last level when the device is about to run dry (the machine paused or slow)
-    If free >= 0 And (backlog >= #HOST_SND_SAMPLES + 16 Or pending <= 1)
-      latency = backlog + pending * #HOST_SND_SAMPLES
+    ; to 0 - holding the last level when the card is about to run dry (the machine paused or slow)
+    *b = 0
+    If backlog >= #HOST_SND_SAMPLES + 16 Or queued <= #HOST_SND_SAMPLES : *b = GL_AudioNext() : EndIf
+    If *b
+      latency = backlog + queued
       HostSndLatency = HostSndLatency + latency - HostSndLatency / 16       ; (x16: averaged over 16 buffers)
       HostSndStep = 65536 + (HostSndLatency / 16 - #HOST_SND_TARGET) / 8
       If HostSndStep > 65536 + 330 : HostSndStep = 65536 + 330 : EndIf      ; +0.5%
       If HostSndStep < 65536 - 330 : HostSndStep = 65536 - 330 : EndIf      ; -0.5%
-      If pending = 0 And HostWavBytes : HostSndUnderruns + 1 : HostSndEvents$ + "underrun at " + Str(HostWavBytes / 2) + #LF$ : EndIf
-      *b = *HostSndBuf(free)
+      If queued = 0 And HostWavBytes : HostSndUnderruns + 1 : HostSndEvents$ + "underrun at " + Str(HostWavBytes / 2) + #LF$ : EndIf
       pos = HostFifoR
       For k = 0 To #HOST_SND_SAMPLES - 1
         If (pos >> 16) < HostFifoW
@@ -202,17 +188,17 @@ Procedure HostSoundThread(*unused)
         Else
           v = HostSndLast : HostSndHeld + 1  ; (ran dry: hold, and read on from here when it comes)
         EndIf
-        PokeW(*b + k * 2, v) : HostSndLast = v
+        PokeW(*HostSndMono + k * 2, v) : HostSndLast = v
+        If HostSndMuted : v = 0 : EndIf
+        PokeW(*b + k * 4, v) : PokeW(*b + k * 4 + 2, v)   ; left, right
       Next
       HostFifoR = pos
       HostSndWrites + 1
       If HostWav$ <> "" And HostSndWrites % 20 = 0
-        HostSndEvents$ + "w " + Str(HostSndWrites) + " pending " + Str(pending) + " backlog " + Str(backlog) + " step " + Str(HostSndStep - 65536) + " held " + Str(HostSndHeld) + #LF$
+        HostSndEvents$ + "w " + Str(HostSndWrites) + " queued " + Str(queued) + " backlog " + Str(backlog) + " step " + Str(HostSndStep - 65536) + " held " + Str(HostSndHeld) + #LF$
       EndIf
-      If HostWavFile : WriteData(HostWavFile, *b, #HOST_SND_SAMPLES * 2) : EndIf
-      If HostSndMuted : FillMemory(*b, #HOST_SND_SAMPLES * 2, 0) : EndIf
-      HostSndHeader(free)\dwFlags & ~#WHDR_DONE
-      waveOutWrite_(HostSndDevice, @HostSndHeader(free), SizeOf(WAVEHDR))
+      If HostWavFile : WriteData(HostWavFile, *HostSndMono, #HOST_SND_SAMPLES * 2) : EndIf
+      GL_AudioPlay(*b)
       HostWavBytes + #HOST_SND_SAMPLES * 2
     Else
       Delay(2)
@@ -241,7 +227,7 @@ EndProcedure
 Procedure HostSoundClose()
   Protected f.i
   If HostSndThread : HostSndQuit = 1 : WaitThread(HostSndThread, 1000) : HostSndThread = 0 : EndIf
-  If HostSndOpen : waveOutReset_(HostSndDevice) : waveOutClose_(HostSndDevice) : HostSndOpen = 0 : EndIf
+  If HostSndOpen : GL_AudioClose() : HostSndOpen = 0 : EndIf
   If HostWavFile
     HostWavHeader(HostWavFile, HostWavBytes) : CloseFile(HostWavFile) : HostWavFile = 0
     f = CreateFile(#PB_Any, HostWav$ + ".txt")

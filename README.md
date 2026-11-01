@@ -3,7 +3,7 @@
 A Tandy Color Computer 3 emulator for the Raspberry Pi Pico W (RP2040) and Pico 2 W (RP2350), written in
 PureMetal and compiled with PureMetalForge to bare-metal machine code - no SDK, no RTOS. It boots Disk
 Extended Color BASIC on a 480 x 320 SPI panel at the CoCo 3's own 59.92 frames a second, with the 6809 on
-one core and the picture on the other. The same machine also runs as a Windows desktop program.
+one core and the picture on the other. The same machine also runs as a desktop program for Windows and Linux.
 
 ![The PureMetal demo on a Pico 2 W's panel (the firmware's own capture)](docs/pico2w-panel-demo.png)
 
@@ -30,7 +30,7 @@ written in PureMetal.
   picture capture, full speed and reset.
 - **Sound** from the 6-bit DAC and the single-bit output, filtered like the CoCo's own coupling capacitor;
   heard on the desktop version; on a Pico it goes to a Bluetooth speaker in a build that names one.
-- **Desktop version** for Windows: the same machine files with 512 KB, `.DSK` files, sound, a debugger view.
+- **Desktop version** for Windows and Linux, from one source: the same machine files with 512 KB, `.DSK` files, sound, a debugger view.
 
 ## Supported boards
 
@@ -131,17 +131,21 @@ in `src/`.
 
 ![The desktop version running the PureMetal demo](docs/desktop-demo.png)
 
-The same CoCo 3 for Windows, in PureBasic, drawn with the
+The same CoCo 3 for Windows and Linux, from one source, in PureBasic, drawn with the
 [Neon Arcade Display Engine](https://github.com/ajtaji/Neon-Arcade-Dispay-Engine): the machine files in
 `src/` compiled unchanged with a PC host layer (`desktop/host.pbi`) and the desktop build of the
 [6809 core](https://github.com/ajtaji/6809EmulatorPicoSeries). The PC gives the CoCo 512 KB, and the drives
-are `.DSK` files.
+are `.DSK` files. Everything the operating system gives - the window, the clock, the sound card (waveOut on
+Windows, ALSA on Linux), full screen and the pointer - comes through the engine's host services; the
+desktop code calls no operating-system function itself.
 
 ### Building the desktop version
 
-Requires PureBasic 6.41 or later, x64, C back end (`pbcompilerc.exe`). Clone the three repositories side
-by side - the build finds the engine and the 6809 core beside this one - and build from this repository's
-folder (PowerShell):
+Requires PureBasic 6.41 or later, x64, C back end (`pbcompilerc`; the 6809 core holds C code). Clone the
+three repositories side by side - the build finds the engine and the 6809 core beside this one - and build
+from this repository's folder.
+
+**Windows** (PowerShell):
 
 ```powershell
 git clone https://github.com/ajtaji/CoCo3EmulatorPicoSeries.git
@@ -152,8 +156,24 @@ mkdir build
 & "C:\Program Files\PureBasic\Compilers\pbcompilerc.exe" desktop\CoCo3.pb /EXE build\CoCo3.exe /THREAD /DPIAWARE
 ```
 
+**Linux** (PureBasic 6.41 for Linux, with GTK 3, OpenGL and ALSA; under WSL too):
+
+```bash
+git clone https://github.com/ajtaji/CoCo3EmulatorPicoSeries.git
+git clone https://github.com/ajtaji/6809EmulatorPicoSeries.git
+git clone https://github.com/ajtaji/Neon-Arcade-Dispay-Engine.git
+cd CoCo3EmulatorPicoSeries
+mkdir -p build
+export PUREBASIC_HOME=<PureBasic folder>
+$PUREBASIC_HOME/compilers/pbcompilerc desktop/CoCo3.pb -t -o build/CoCo3
+```
+
+Under WSL, build from the Linux disk (for example a folder in your home), not from `/mnt/c`: there the
+Linux compiler includes a file twice and stops with "Procedure is already declared".
+
 To use the engine or the core from somewhere else, add `/CONSTANT GL_ENGINE_DIR$=<path>/` or
-`/CONSTANT COCO_CPU_DIR$=<path>/desktop/` (with the trailing slash).
+`/CONSTANT COCO_CPU_DIR$=<path>/desktop/` on Windows, `--constant GL_ENGINE_DIR$=<path>/` or
+`--constant COCO_CPU_DIR$=<path>/desktop/` on Linux (with the trailing slash).
 
 ### Running it
 
@@ -161,6 +181,13 @@ To use the engine or the core from somewhere else, add `/CONSTANT GL_ENGINE_DIR$
 build\CoCo3.exe --rom <coco3.rom> --cart <disk11.rom>
 build\CoCo3.exe --rom <coco3.rom> --cart <disk11.rom> --disk0 demo\coco3demo.dsk --type 'LOADM\qCOCO3DEM\q:EXEC\n'
 tools\desktop_check.ps1 -Rom <folder with coco3.rom and disk11.rom>
+```
+
+On Linux the program is `build/CoCo3` and takes the same options:
+
+```bash
+build/CoCo3 --rom <coco3.rom> --cart <disk11.rom>
+build/CoCo3 --rom <coco3.rom> --cart <disk11.rom> --log 2000 --type-file tests/hello.bas
 ```
 
 The ROMs (see [ROMs](#roms)) default to a `roms` folder beside `CoCo3.exe`. The window shows the CoCo's
@@ -172,8 +199,9 @@ opens on the Controls tab; `--wav file.wav` records the sound.
 `--pointer-test file.txt` checks that the pointer and the controls agree at the display's scale: it drives
 the window with synthetic pointer positions (the real pointer is never moved), four points on each of 16
 controls from the top of the window to the bottom, writes the results to the file and exits with the number
-of failures. `--fullscreen-test file.txt [shot.png]` enters and leaves full screen by posted keys and checks
-the window, the picture, the frame rate and the keys (21 checks), and exits with the number of failures.
+of failures. `--fullscreen-test file.txt [shot.png]` enters and leaves full screen by its keys (given to the
+window's key handler as the window's key events give them) and checks the window, the picture, the frame
+rate and the keys (21 checks), and exits with the number of failures.
 
 ### Full screen
 

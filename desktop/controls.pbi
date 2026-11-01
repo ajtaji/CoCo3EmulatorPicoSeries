@@ -26,7 +26,7 @@ EndEnumeration
 
 Structure Control
   kind.i
-  pcKey.i           ; the #PB_Shortcut_ the OpenGL gadget reports; for #CTL_MOD the Windows VK held; 0 for a note
+  pcKey.i           ; the #PB_Shortcut_ the OpenGL gadget reports; for #CTL_MOD its #PB_OpenGL_ modifier bit; 0 for a note
   when.i
   value.i
   pc$
@@ -54,8 +54,8 @@ Procedure ControlsInit()
   ControlAdd(#CTL_KEY, #PB_Shortcut_Right, #CTL_ALWAYS, $83, "Right", "right arrow")
   ControlAdd(#CTL_KEY, #PB_Shortcut_F1, #CTL_ALWAYS, $84, "F1", "F1")
   ControlAdd(#CTL_KEY, #PB_Shortcut_F2, #CTL_ALWAYS, $85, "F2", "F2")
-  ControlAdd(#CTL_MOD, #VK_MENU, #CTL_ALWAYS, $86, "Alt + a letter or digit", "ALT + that key")
-  ControlAdd(#CTL_MOD, #VK_CONTROL, #CTL_ALWAYS, $87, "Ctrl + a letter or digit", "CTRL + that key")
+  ControlAdd(#CTL_MOD, #PB_OpenGL_Alt, #CTL_ALWAYS, $86, "Alt + a letter or digit", "ALT + that key")
+  ControlAdd(#CTL_MOD, #PB_OpenGL_Control, #CTL_ALWAYS, $87, "Ctrl + a letter or digit", "CTRL + that key")
   ControlAdd(#CTL_NOTE, 0, #CTL_ALWAYS, 0, "(none)", "joysticks and gamepad: not on the desktop yet - both sticks centred, fire buttons up")
   ControlAdd(#CTL_ACTION, #PB_Shortcut_F5, #CTL_ALWAYS, #ACT_RUNPAUSE, "F5", "window: run / pause")
   ControlAdd(#CTL_ACTION, #PB_Shortcut_F10, #CTL_ALWAYS, #ACT_STEP, "F10", "window: one instruction (paused)")
