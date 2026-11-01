@@ -93,7 +93,7 @@ XIncludeFile "controls.pbi"
 #TEX_H = 240
 #FRAME_US = 16688                        ; 262 x 1824 GIME clocks at 28.636363 MHz
 
-Global Dim ScrPix.l(#SCR_W * #TEX_H)     ; RGBA, bottom row first (as the engine samples it)
+Global Dim ScrPix.l(#SCR_W * #TEX_H)     ; RGBA, in the row order the engine samples (#GL_SpriteRowsBottomUp)
 Global ScrDirty.i = 1
 Global EmuRunning.i = 1, EmuFull.i, EmuFrames.q, EmuStop$
 Global SpeedMark.q, SpeedCycles.q, SpeedFrames.q, SpeedKhz.f, SpeedFps.f, SpeedX.f
@@ -111,7 +111,7 @@ Procedure ScreenRender()
     For i = 0 To 16
       c = VideoRgb(i) : lut(i) = $FF000000 | ((c & $FF) << 16) | (c & $FF00) | ((c >> 16) & $FF)
     Next
-    *p = @ScrPix((#TEX_H - 1 - line) * #SCR_W)
+    If #GL_SpriteRowsBottomUp : *p = @ScrPix((#TEX_H - 1 - line) * #SCR_W) : Else : *p = @ScrPix(line * #SCR_W) : EndIf
     For x = 0 To 639
       *p\l = lut(VideoSamples(x)) : *p + 4
     Next
