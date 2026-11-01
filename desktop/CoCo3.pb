@@ -781,7 +781,7 @@ Procedure WindowRun()
               Case #PB_EventType_LeftButtonUp : MouseDown = #False
               Case #PB_EventType_MouseWheel : Wheel + GetGadgetAttribute(Gl, #PB_OpenGL_WheelDelta)
               Case #PB_EventType_KeyDown
-                GadgetKeyDown(GetGadgetAttribute(Gl, #PB_OpenGL_Key), GetGadgetAttribute(Gl, #PB_OpenGL_Modifiers))
+                GadgetKeyDown(GL_KeyEventCode(GetGadgetAttribute(Gl, #PB_OpenGL_Key)), GetGadgetAttribute(Gl, #PB_OpenGL_Modifiers))
               Case #PB_EventType_Input
                 KeyChar = GetGadgetAttribute(Gl, #PB_OpenGL_Input)
                 If Neon_FocusID = 0 And KeyChar >= 32 And KeyChar < 127 : KeyPut(KeyChar) : EndIf
